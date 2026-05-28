@@ -3872,6 +3872,8 @@ common_ss.add(files('cpu-common.c'))
 user_ss.add(files('cpu-target.c'))
 system_ss.add(files('cpu-target.c'))
 
+subdir('uae')
+
 # Work around a gcc bug/misfeature wherein constant propagation looks
 # through an alias:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=99696
