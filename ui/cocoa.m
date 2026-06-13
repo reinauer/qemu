@@ -64,8 +64,6 @@
 #define COCOA_DEBUG(...)  ((void) 0)
 #endif
 
-#define cgrect(nsrect) (*(CGRect *)&(nsrect))
-
 #define UC_CTRL_KEY "\xe2\x8c\x83"
 #define UC_ALT_KEY "\xe2\x8c\xa5"
 
@@ -426,24 +424,8 @@ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEven
             0, //interpolate
             kCGRenderingIntentDefault //intent
         );
-        // selective drawing code (draws only dirty rectangles) (OS X >= 10.4)
-        const NSRect *rectList;
-        NSInteger rectCount;
-        int i;
-        CGImageRef clipImageRef;
-        CGRect clipRect;
-
-        [self getRectsBeingDrawn:&rectList count:&rectCount];
-        for (i = 0; i < rectCount; i++) {
-            clipRect = rectList[i];
-            clipRect.origin.y = (float)h - (clipRect.origin.y + clipRect.size.height);
-            clipImageRef = CGImageCreateWithImageInRect(
-                                                        imageRef,
-                                                        clipRect
-                                                        );
-            CGContextDrawImage (viewContextRef, cgrect(rectList[i]), clipImageRef);
-            CGImageRelease (clipImageRef);
-        }
+        /* AppKit clips the drawing to the dirty region. */
+        CGContextDrawImage(viewContextRef, CGRectMake(0, 0, w, h), imageRef);
         CGImageRelease (imageRef);
         CGDataProviderRelease(dataProviderRef);
     }
