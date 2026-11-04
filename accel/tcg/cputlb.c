@@ -951,7 +951,7 @@ static inline void tlb_set_dirty1_locked(CPUTLBEntry *tlb_entry,
 
 /* update the TLB corresponding to virtual page vaddr
    so that it is no longer dirty */
-static void tlb_set_dirty(CPUState *cpu, vaddr addr)
+static bool tlb_set_dirty(CPUState *cpu, vaddr addr, ram_addr_t ram_addr)
 {
     int mmu_idx;
 
@@ -959,6 +959,14 @@ static void tlb_set_dirty(CPUState *cpu, vaddr addr)
 
     addr &= TARGET_PAGE_MASK;
     qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    /*
+     * Serialize with tlb_reset_dirty(): another CPU may have protected code
+     * after the caller checked the dirty bits but before we took the lock.
+     */
+    if (physical_memory_is_clean(ram_addr)) {
+        qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+        return false;
+    }
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
         tlb_set_dirty1_locked(tlb_entry(cpu, mmu_idx, addr), addr);
     }
@@ -970,6 +978,7 @@ static void tlb_set_dirty(CPUState *cpu, vaddr addr)
         }
     }
     qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+    return true;
 }
 
 /* Our TLB does not support large pages, so remember the area covered by
@@ -1352,9 +1361,9 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
     physical_memory_set_dirty_range(ram_addr, size, DIRTY_CLIENTS_NOCODE);
 
     /* We remove the notdirty callback only if the code has been flushed. */
-    if (!physical_memory_is_clean(ram_addr)) {
+    if (!physical_memory_is_clean(ram_addr) &&
+        tlb_set_dirty(cpu, mem_vaddr, ram_addr)) {
         trace_memory_notdirty_set_dirty(mem_vaddr);
-        tlb_set_dirty(cpu, mem_vaddr);
     }
 }
 
