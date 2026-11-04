@@ -189,6 +189,11 @@ void bitmap_set_atomic(unsigned long *map, long start, long nr)
 
     assert(start >= 0 && nr >= 0);
 
+    if (nr == 1) {
+        set_bit_atomic(start, map);
+        return;
+    }
+
     /* First word */
     if (nr - bits_to_set > 0) {
         qatomic_or(p, mask_to_set);
