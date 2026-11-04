@@ -1098,6 +1098,23 @@ bool tb_invalidate_phys_page_unwind(CPUState *cpu, tb_page_addr_t addr,
     return false;
 }
 #else
+/* Return whether the part of @tb on page @n intersects [@start, @last]. */
+static bool tb_page_range_overlaps(const TranslationBlock *tb, int n,
+                                   tb_page_addr_t start, tb_page_addr_t last)
+{
+    tb_page_addr_t tb_start = tb_page_addr0(tb);
+    tb_page_addr_t tb_last = tb_start + tb->size - 1;
+
+    /* A TB may span two non-contiguous physical pages. */
+    if (n == 0) {
+        tb_last = MIN(tb_last, tb_start | ~TARGET_PAGE_MASK);
+    } else {
+        tb_start = tb_page_addr1(tb);
+        tb_last = tb_start + (tb_last & ~TARGET_PAGE_MASK);
+    }
+    return !(tb_last < start || tb_start > last);
+}
+
 /*
  * @p must be non-NULL.
  * Call with all @pages locked.
@@ -1115,31 +1132,21 @@ tb_invalidate_phys_page_range__locked(CPUState *cpu,
     PageForEachNext n;
     bool current_tb_modified = false;
     TranslationBlock *current_tb = NULL;
+    bool need_current_tb = retaddr && cpu && cpu->cc->tcg_ops->precise_smc;
 
     /* Range may not cross a page. */
     tcg_debug_assert(((start ^ last) & TARGET_PAGE_MASK) == 0);
-
-    if (retaddr && cpu && cpu->cc->tcg_ops->precise_smc) {
-        current_tb = tcg_tb_lookup(retaddr);
-    }
 
     /*
      * We remove all the TBs in the range [start, last].
      * XXX: see if in some cases it could be faster to invalidate all the code
      */
     PAGE_FOR_EACH_TB(start, last, p, tb, n) {
-        tb_page_addr_t tb_start, tb_last;
-
-        /* NOTE: this is subtle as a TB may span two physical pages */
-        tb_start = tb_page_addr0(tb);
-        tb_last = tb_start + tb->size - 1;
-        if (n == 0) {
-            tb_last = MIN(tb_last, tb_start | ~TARGET_PAGE_MASK);
-        } else {
-            tb_start = tb_page_addr1(tb);
-            tb_last = tb_start + (tb_last & ~TARGET_PAGE_MASK);
-        }
-        if (!(tb_last < start || tb_start > last)) {
+        if (tb_page_range_overlaps(tb, n, start, last)) {
+            if (need_current_tb) {
+                current_tb = tcg_tb_lookup(retaddr);
+                need_current_tb = false;
+            }
             if (unlikely(current_tb == tb) &&
                 (tb_cflags(current_tb) & CF_COUNT_MASK) != 1) {
                 /*
@@ -1214,7 +1221,32 @@ void tb_invalidate_phys_range_fast(CPUState *cpu, ram_addr_t start,
 
     if (p) {
         ram_addr_t last = start + len - 1;
-        struct page_collection *pages = page_collection_lock(start, last);
+        struct page_collection *pages;
+        TranslationBlock *tb;
+        PageForEachNext n;
+
+        /*
+         * A write that misses every TB needs only this page's lock.
+         * Avoid constructing a collection and locking TBs' other pages.
+         */
+        assert_no_pages_locked();
+        page_lock(p);
+        PAGE_FOR_EACH_TB(start, last, p, tb, n) {
+            if (tb_page_range_overlaps(tb, n, start, last)) {
+                break;
+            }
+        }
+        if (!tb) {
+            if (!p->first_tb) {
+                tlb_unprotect_code(start);
+            }
+            page_unlock(p);
+            return;
+        }
+        page_unlock(p);
+
+        /* Reacquire in order and recheck before invalidating any TBs. */
+        pages = page_collection_lock(start, last);
 
         tb_invalidate_phys_page_range__locked(cpu, pages, p,
                                               start, last, ra);
