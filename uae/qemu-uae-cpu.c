@@ -216,6 +216,26 @@ static void qemu_uae_unlock_if_needed(void)
     }
 }
 
+typedef struct UAEMemoryRegion {
+    Object parent_obj;
+    MemoryRegion mr;
+} UAEMemoryRegion;
+
+#define TYPE_UAE_MEMORY_REGION "uae-memory-region"
+
+static void uae_memory_region_register_types(void)
+{
+    static const TypeInfo info = {
+        .name = TYPE_UAE_MEMORY_REGION,
+        .parent = TYPE_OBJECT,
+        .instance_size = sizeof(UAEMemoryRegion),
+    };
+
+    type_register_static(&info);
+}
+
+type_init(uae_memory_region_register_types)
+
 struct UAEregion
 {
     struct MemoryRegion *region;
@@ -229,17 +249,21 @@ static void ppc_cpu_map_add(PPCMemoryRegion *r)
 {
     int i;
     for (i = 0; i < MAX_MEMORY_REGIONS; i++) {
+        UAEMemoryRegion *owner;
         MemoryRegion *mem;
         struct UAEregion *region = &added_regions[i];
         if (region->region != NULL)
             continue;
         uae_log("QEMU: %02d %08x [+%8x]  =>  %p  \"%s\")\n",
                 i, r->start, r->size, r->memory, r->name);
-        mem = g_new(MemoryRegion, 1);
+        /* FlatViews retain the owner until their RCU readers have finished. */
+        owner = (UAEMemoryRegion *)object_new(TYPE_UAE_MEMORY_REGION);
+        mem = &owner->mr;
         if (r->memory) {
-            memory_region_init_ram_ptr(mem, NULL, r->name, r->size, r->memory);
+            memory_region_init_ram_ptr(mem, OBJECT(owner), r->name, r->size,
+                                       r->memory);
         } else {
-            memory_region_init_io(mem, NULL, &indirect_ops,
+            memory_region_init_io(mem, OBJECT(owner), &indirect_ops,
                                   (void *) (uintptr_t) r->start, r->name,
                                   r->size);
         }
@@ -267,7 +291,7 @@ static void ppc_cpu_map_memory_single(PPCMemoryRegion *r)
                         (uint32_t)mem->addr,
                         mem->size);
                 memory_region_del_subregion(get_system_memory(), mem->region);
-                object_unparent(OBJECT(mem->region));
+                object_unref(memory_region_owner(mem->region));
                 mem->region = NULL;
             }
         }
@@ -279,19 +303,25 @@ static void ppc_cpu_map_memory_single(PPCMemoryRegion *r)
         if (mem->region == NULL)
             continue;
         if (mem->addr == r->start && mem->size == r->size) {
+            bool is_ram = memory_region_is_ram(mem->region);
+            if (r->memory ? (is_ram && memory_region_get_ram_ptr(mem->region) ==
+                             r->memory)
+                          : !is_ram) {
+                /* Same backing: keep the region and its RAMBlock. */
+                return;
+            }
+            /*
+             * Never re-initialise a live MemoryRegion in place: that leaks its
+             * RAMBlock, which keeps aliasing the same host memory. TCG then
+             * keys translated code by one RAMBlock while guest stores dirty
+             * the other, so self-modifying code (e.g. a program loaded over
+             * old code after a warm reboot) keeps running stale translations.
+             */
             uae_log("QEMU: region %02d replaced\n", i);
             memory_region_del_subregion(get_system_memory(), mem->region);
-            if (r->memory) {
-                memory_region_init_ram_ptr(mem->region, NULL, r->name, r->size,
-                                           r->memory);
-            } else {
-                memory_region_init_io(
-                    mem->region, NULL, &indirect_ops,
-                    (void *) (uintptr_t) r->start, r->name, r->size);
-            }
-            memory_region_add_subregion(
-                get_system_memory(), r->start, mem->region);
-            return;
+            object_unref(memory_region_owner(mem->region));
+            mem->region = NULL;
+            break;
         }
     }
     ppc_cpu_map_add(r);
@@ -313,7 +343,7 @@ static void ppc_cpu_map_memory_multi(PPCMemoryRegion *regions, int count)
         if (mem->region == NULL)
             continue;
         memory_region_del_subregion(get_system_memory(), mem->region);
-        object_unparent(OBJECT(mem->region));
+        object_unref(memory_region_owner(mem->region));
         mem->region = NULL;
     }
 
