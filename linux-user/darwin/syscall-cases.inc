@@ -289,6 +289,27 @@ case TARGET_NR_getegid: {
     return get_errno(getegid());
 }
 #endif
+/* Support posix_spawn's credential reset without emulating privilege changes. */
+#ifdef TARGET_NR_setresuid
+case TARGET_NR_setresuid: {
+    if (((uid_t)a1 != (uid_t)-1 && (uid_t)a1 != getuid()) ||
+        ((uid_t)a2 != (uid_t)-1 && (uid_t)a2 != geteuid()) ||
+        (uid_t)a3 != (uid_t)-1) {
+        return -TARGET_EPERM;
+    }
+    return 0;
+}
+#endif
+#ifdef TARGET_NR_setresgid
+case TARGET_NR_setresgid: {
+    if (((gid_t)a1 != (gid_t)-1 && (gid_t)a1 != getgid()) ||
+        ((gid_t)a2 != (gid_t)-1 && (gid_t)a2 != getegid()) ||
+        (gid_t)a3 != (gid_t)-1) {
+        return -TARGET_EPERM;
+    }
+    return 0;
+}
+#endif
 #ifdef TARGET_NR_getpgrp
 case TARGET_NR_getpgrp: {
     return get_errno(getpgrp());
@@ -839,6 +860,11 @@ case TARGET_NR_ioctl: {
         return put_user_u32(n, a3);
     }
     return -TARGET_ENOTTY;
+}
+#endif
+#ifdef TARGET_NR_pselect6
+case TARGET_NR_pselect6: {
+    return guest_pselect6(a1, a2, a3, a4, a5, a6);
 }
 #endif
 #ifdef TARGET_NR_poll

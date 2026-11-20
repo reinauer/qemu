@@ -1009,6 +1009,100 @@ static abi_long guest_fcntl(int fd, int cmd, abi_long arg)
     }
 }
 
+/* Linux uses guest-long bitmaps; Darwin fd_set has a different word size. */
+static abi_long guest_pselect6(int nfds, abi_ulong read_addr,
+                              abi_ulong write_addr, abi_ulong except_addr,
+                              abi_ulong timeout_addr, abi_ulong sigarg_addr)
+{
+    abi_ulong addrs[3] = {read_addr, write_addr, except_addr};
+    abi_ulong *target[3] = {NULL, NULL, NULL};
+    fd_set host[3];
+    struct timespec timeout, start, end;
+    abi_long ret = 0;
+    size_t bytes;
+
+    if (nfds < 0 || nfds > FD_SETSIZE) {
+        return -TARGET_EINVAL;
+    }
+    if (sigarg_addr) {
+        abi_ulong args[2];
+        if (copy_from_user(args, sigarg_addr, sizeof(args))) {
+            return -TARGET_EFAULT;
+        }
+        /* Temporary guest masks require integration with signal delivery. */
+        if (tswapal(args[0])) {
+            return -TARGET_ENOSYS;
+        }
+    }
+    if (timeout_addr) {
+        ret = get_timespec(&timeout, timeout_addr);
+        if (ret) {
+            return ret;
+        }
+    }
+    bytes = DIV_ROUND_UP(nfds, TARGET_ABI_BITS) * sizeof(abi_ulong);
+    for (int i = 0; i < 3; i++) {
+        FD_ZERO(&host[i]);
+        if (!addrs[i] || !bytes) {
+            continue;
+        }
+        target[i] = lock_user(VERIFY_WRITE, addrs[i], bytes, 1);
+        if (!target[i]) {
+            ret = -TARGET_EFAULT;
+            goto out;
+        }
+        for (int fd = 0; fd < nfds; fd++) {
+            if (tswapal(target[i][fd / TARGET_ABI_BITS]) &
+                ((abi_ulong)1 << (fd % TARGET_ABI_BITS))) {
+                FD_SET(fd, &host[i]);
+            }
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    ret = get_errno(pselect(nfds, read_addr ? &host[0] : NULL,
+                            write_addr ? &host[1] : NULL,
+                            except_addr ? &host[2] : NULL,
+                            timeout_addr ? &timeout : NULL, NULL));
+    if (timeout_addr && (ret >= 0 || ret == -TARGET_EINTR)) {
+        /* Unlike libc pselect, Linux's raw syscall updates the timeout. */
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        timeout.tv_sec -= end.tv_sec - start.tv_sec;
+        timeout.tv_nsec -= end.tv_nsec - start.tv_nsec;
+        if (timeout.tv_nsec < 0) {
+            timeout.tv_nsec += 1000000000;
+            timeout.tv_sec--;
+        } else if (timeout.tv_nsec >= 1000000000) {
+            timeout.tv_nsec -= 1000000000;
+            timeout.tv_sec++;
+        }
+        if (timeout.tv_sec < 0) {
+            timeout.tv_sec = timeout.tv_nsec = 0;
+        }
+        if (put_timespec(timeout_addr, &timeout)) {
+            ret = -TARGET_EFAULT;
+        }
+    }
+    if (ret >= 0) {
+        for (int i = 0; i < 3; i++) {
+            if (!target[i]) {
+                continue;
+            }
+            memset(target[i], 0, bytes);
+            for (int fd = 0; fd < nfds; fd++) {
+                if (FD_ISSET(fd, &host[i])) {
+                    target[i][fd / TARGET_ABI_BITS] |=
+                        tswapal((abi_ulong)1 << (fd % TARGET_ABI_BITS));
+                }
+            }
+        }
+    }
+out:
+    for (int i = 0; i < 3; i++) {
+        unlock_user(target[i], addrs[i], ret >= 0 ? bytes : 0);
+    }
+    return ret;
+}
+
 static abi_long guest_poll(abi_ulong addr, unsigned count, int timeout)
 {
     struct target_pollfd {
