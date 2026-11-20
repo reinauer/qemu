@@ -98,7 +98,7 @@ static hwaddr e500_pci_regs_offset(PPCE500MachineClass *pmc)
 }
 
 static uint32_t *pci_map_create(void *fdt, uint32_t mpic, int first_slot,
-                                int nr_slots, int *len)
+                                int nr_slots, unsigned int first_irq, int *len)
 {
     int i = 0;
     int slot;
@@ -118,7 +118,7 @@ static uint32_t *pci_map_create(void *fdt, uint32_t mpic, int first_slot,
             pci_map[i++] = cpu_to_be32(pci_irq + 1);
             pci_map[i++] = cpu_to_be32(mpic);
             host_irq = ppce500_pci_map_irq_slot(slot, pci_irq);
-            pci_map[i++] = cpu_to_be32(host_irq + 1);
+            pci_map[i++] = cpu_to_be32(host_irq + first_irq);
             pci_map[i++] = cpu_to_be32(0x1);
         }
     }
@@ -631,7 +631,7 @@ static int ppce500_load_device_tree(PPCE500MachineState *pms,
                            0x0, 0x7);
     pci_map = pci_map_create(fdt, qemu_fdt_get_phandle(fdt, mpic),
                              pmc->pci_first_slot, pmc->pci_nr_slots,
-                             &len);
+                             pmc->pci_first_irq, &len);
     qemu_fdt_setprop(fdt, pci, "interrupt-map", pci_map, len);
     qemu_fdt_setprop_phandle(fdt, pci, "interrupt-parent", mpic);
     qemu_fdt_setprop_cells(fdt, pci, "interrupts", 24, 2);
@@ -972,9 +972,8 @@ void ppce500_init(MachineState *machine)
     int dt_size;
     int i;
     unsigned int smp_cpus = machine->smp.cpus;
-    /* irq num for pin INTA, INTB, INTC and INTD is 1, 2, 3 and
-     * 4 respectively */
-    unsigned int pci_irq_nrs[PCI_NUM_PINS] = {1, 2, 3, 4};
+    /* MPIC inputs of pins INTA-INTD, from pmc->pci_first_irq on */
+    unsigned int pci_irq_nrs[PCI_NUM_PINS];
     IrqLines *irqs;
     DeviceState *dev, *mpicdev;
     DriveInfo *dinfo;
@@ -1104,6 +1103,9 @@ void ppce500_init(MachineState *machine)
                                 sysbus_mmio_get_region(s, 0));
 
     /* PCI */
+    for (i = 0; i < PCI_NUM_PINS; i++) {
+        pci_irq_nrs[i] = pmc->pci_first_irq + i;
+    }
     dev = qdev_new("e500-pcihost");
     object_property_add_child(OBJECT(machine), "pci-host", OBJECT(dev));
     qdev_prop_set_uint32(dev, "first_slot", pmc->pci_first_slot);
@@ -1326,10 +1328,18 @@ static const TypeInfo e500_ccsr_info = {
     .instance_init = e500_ccsr_initfn,
 };
 
+static void ppce500_machine_class_init(ObjectClass *oc, const void *data)
+{
+    PPCE500MachineClass *pmc = PPCE500_MACHINE_CLASS(oc);
+
+    pmc->pci_first_irq = 1;
+}
+
 static const TypeInfo ppce500_info = {
     .name          = TYPE_PPCE500_MACHINE,
     .parent        = TYPE_MACHINE,
     .abstract      = true,
+    .class_init    = ppce500_machine_class_init,
     .instance_size = sizeof(PPCE500MachineState),
     .class_size    = sizeof(PPCE500MachineClass),
 };
