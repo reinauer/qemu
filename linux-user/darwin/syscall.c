@@ -589,6 +589,48 @@ static abi_long guest_getdents(int fd, abi_ulong addr, unsigned count)
     return used;
 }
 
+static int host_clock(int id)
+{
+    switch (id) {
+    case 0:
+        return CLOCK_REALTIME;
+    case 1:
+    case 4:
+    case 6:
+    case 7:
+        return CLOCK_MONOTONIC;
+    case 2:
+        return CLOCK_PROCESS_CPUTIME_ID;
+    case 3:
+        return CLOCK_THREAD_CPUTIME_ID;
+    case 5:
+        return CLOCK_REALTIME;
+    default:
+        return -1;
+    }
+}
+
+static abi_long put_timespec(abi_ulong addr, const struct timespec *ts)
+{
+    struct target_timespec target = {.tv_sec = tswapal(ts->tv_sec),
+                                     .tv_nsec = tswapal(ts->tv_nsec)};
+    return copy_to_user(addr, &target, sizeof(target)) ? -TARGET_EFAULT : 0;
+}
+
+static abi_long get_timespec(struct timespec *ts, abi_ulong addr)
+{
+    struct target_timespec target;
+    if (copy_from_user(&target, addr, sizeof(target))) {
+        return -TARGET_EFAULT;
+    }
+    ts->tv_sec = (abi_long)tswapal(target.tv_sec);
+    ts->tv_nsec = (abi_long)tswapal(target.tv_nsec);
+    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000) {
+        return -TARGET_EINVAL;
+    }
+    return 0;
+}
+
 #include "thread.c.inc"
 
 static abi_long guest_exit(CPUArchState *env, int code)

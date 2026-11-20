@@ -509,6 +509,122 @@ case TARGET_NR_readlinkat: {
     return ret;
 }
 #endif
+#ifdef TARGET_NR_clock_gettime
+case TARGET_NR_clock_gettime: {
+    struct timespec out;
+    int clock = host_clock(a1);
+    if (clock < 0) {
+        return -TARGET_EINVAL;
+    }
+    if (!a2) {
+        return -TARGET_EFAULT;
+    }
+    ret = get_errno(num == TARGET_NR_clock_gettime ? clock_gettime(clock, &out)
+                                                   : clock_getres(clock, &out));
+    return ret ? ret : (a2 ? put_timespec(a2, &out) : 0);
+}
+#endif
+#ifdef TARGET_NR_clock_getres
+case TARGET_NR_clock_getres: {
+    struct timespec out;
+    int clock = host_clock(a1);
+    if (clock < 0) {
+        return -TARGET_EINVAL;
+    }
+    ret = get_errno(num == TARGET_NR_clock_gettime ? clock_gettime(clock, &out)
+                                                   : clock_getres(clock, &out));
+    return ret ? ret : (a2 ? put_timespec(a2, &out) : 0);
+}
+#endif
+#ifdef TARGET_NR_gettimeofday
+case TARGET_NR_gettimeofday: {
+    struct timeval now;
+    struct target_timeval out;
+    gettimeofday(&now, NULL);
+    out.tv_sec = tswapal(now.tv_sec);
+    out.tv_usec = tswapal(now.tv_usec);
+    if (a1 && copy_to_user(a1, &out, sizeof(out))) {
+        return -TARGET_EFAULT;
+    }
+    if (a2) {
+        uint64_t zero = 0;
+        if (copy_to_user(a2, &zero, 8)) {
+            return -TARGET_EFAULT;
+        }
+    }
+    return 0;
+}
+#endif
+#ifdef TARGET_NR_time
+case TARGET_NR_time: {
+    time_t now = time(NULL);
+    if (a1 && put_user_ual(now, a1)) {
+        return -TARGET_EFAULT;
+    }
+    return now;
+}
+#endif
+#ifdef TARGET_NR_nanosleep
+case TARGET_NR_nanosleep: {
+    struct timespec req, rem;
+    ret = get_timespec(&req, a1);
+    if (ret) {
+        return ret;
+    }
+    ret = get_errno(nanosleep(&req, &rem));
+    if (ret == -TARGET_EINTR && a2 && put_timespec(a2, &rem)) {
+        return -TARGET_EFAULT;
+    }
+    return ret;
+}
+#endif
+#ifdef TARGET_NR_clock_nanosleep
+case TARGET_NR_clock_nanosleep: {
+    struct timespec req, rem, now;
+    int clock = host_clock(a1);
+    if (clock < 0 || (a2 & ~1)) {
+        return -TARGET_EINVAL;
+    }
+    ret = get_timespec(&req, a3);
+    if (ret) {
+        return ret;
+    }
+    if (a2 & 1) {
+        clock_gettime(clock, &now);
+        req.tv_sec -= now.tv_sec;
+        req.tv_nsec -= now.tv_nsec;
+        if (req.tv_nsec < 0) {
+            req.tv_nsec += 1000000000;
+            req.tv_sec--;
+        }
+        if (req.tv_sec < 0) {
+            return 0;
+        }
+    }
+    ret = get_errno(nanosleep(&req, &rem));
+    if (ret == -TARGET_EINTR && !(a2 & 1) && a4 && put_timespec(a4, &rem)) {
+        return -TARGET_EFAULT;
+    }
+    return ret;
+}
+#endif
+#ifdef TARGET_NR_getrandom
+case TARGET_NR_getrandom: {
+    if (a3 & ~3) {
+        return -TARGET_EINVAL;
+    }
+    if (a2 < 0 || a2 > SSIZE_MAX) {
+        return -TARGET_EINVAL;
+    }
+    p = lock_user(VERIFY_WRITE, a1, a2, 0);
+    if (!p && a2) {
+        return -TARGET_EFAULT;
+    }
+    arc4random_buf(p, a2);
+    unlock_user(p, a1, a2);
+    return a2;
+}
+#endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl: {
     if (a2 == TARGET_TIOCGWINSZ || a2 == TARGET_TIOCSWINSZ) {

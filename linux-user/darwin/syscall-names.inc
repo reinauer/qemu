@@ -223,6 +223,34 @@ return "readlink";
 case TARGET_NR_readlinkat:
 return "readlinkat";
 #endif
+#ifdef TARGET_NR_clock_gettime
+case TARGET_NR_clock_gettime:
+return "clock_gettime";
+#endif
+#ifdef TARGET_NR_clock_getres
+case TARGET_NR_clock_getres:
+return "clock_getres";
+#endif
+#ifdef TARGET_NR_gettimeofday
+case TARGET_NR_gettimeofday:
+return "gettimeofday";
+#endif
+#ifdef TARGET_NR_time
+case TARGET_NR_time:
+return "time";
+#endif
+#ifdef TARGET_NR_nanosleep
+case TARGET_NR_nanosleep:
+return "nanosleep";
+#endif
+#ifdef TARGET_NR_clock_nanosleep
+case TARGET_NR_clock_nanosleep:
+return "clock_nanosleep";
+#endif
+#ifdef TARGET_NR_getrandom
+case TARGET_NR_getrandom:
+return "getrandom";
+#endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl:
 return "ioctl";
