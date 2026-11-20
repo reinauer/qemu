@@ -639,8 +639,13 @@ static void ati_mm_write(void *opaque, hwaddr addr,
                                        (s->regs.crtc_gen_cntl & CRTC2_CUR_EN) != 0);
             }
         }
-        if ((val & (CRTC2_EXT_DISP_EN | CRTC2_EN)) !=
-            (s->regs.crtc_gen_cntl & (CRTC2_EXT_DISP_EN | CRTC2_EN))) {
+        /*
+         * Drivers may enable the CRTC first and set the pixel width after
+         * (AmigaOS's ATIRadeon.chip does), so a new width is a new mode too
+         */
+        if ((val & (CRTC2_EXT_DISP_EN | CRTC2_EN | CRTC_PIX_WIDTH_MASK)) !=
+            (s->regs.crtc_gen_cntl &
+             (CRTC2_EXT_DISP_EN | CRTC2_EN | CRTC_PIX_WIDTH_MASK))) {
             ati_vga_switch_mode(s);
         }
         break;
