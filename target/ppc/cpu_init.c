@@ -2961,7 +2961,12 @@ static void init_proc_e500(CPUPPCState *env, int version)
                  SPR_NOACCESS, SPR_NOACCESS,
                  &spr_read_generic, &spr_write_e500_l1csr1,
                  0x00000000);
-    if (version != fsl_e500v1 && version != fsl_e500v2) {
+    /*
+     * The e500v2 has no L2CSR0, its L2 cache is in CCSR, but the loader of
+     * the AmigaOne A1222 (a P1022, e500v2) flushes the L2 through it and
+     * waits for the flush bit to clear, so give it the e500mc's.
+     */
+    if (version != fsl_e500v1) {
         spr_register(env, SPR_Exxx_L2CSR0, "L2CSR0",
                      SPR_NOACCESS, SPR_NOACCESS,
                      &spr_read_generic, &spr_write_e500_l2csr0,
