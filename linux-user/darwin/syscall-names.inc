@@ -453,7 +453,15 @@ case TARGET_NR_recvmsg:
 return "recvmsg";
 #endif
 
+#ifdef TARGET_NR_sysinfo
+case TARGET_NR_sysinfo:
+return "sysinfo";
+#endif
 
+#ifdef TARGET_NR_sched_getaffinity
+case TARGET_NR_sched_getaffinity:
+return "sched_getaffinity";
+#endif
 
 #ifdef TARGET_NR_symlink
 case TARGET_NR_symlink:

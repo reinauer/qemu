@@ -1146,6 +1146,16 @@ case TARGET_NR_recvmsg: {
     return guest_message(a1, a2, a3, false);
 }
 #endif
+#ifdef TARGET_NR_sysinfo
+case TARGET_NR_sysinfo: {
+    return guest_sysinfo(a1);
+}
+#endif
+#ifdef TARGET_NR_sched_getaffinity
+case TARGET_NR_sched_getaffinity: {
+    return guest_getaffinity(a1, a2, a3);
+}
+#endif
 #ifdef TARGET_NR_symlink
 case TARGET_NR_symlink: {
     char *target = lock_user_string(a1);

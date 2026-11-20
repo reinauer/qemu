@@ -1221,6 +1221,7 @@ static abi_long guest_rusage(int who, abi_ulong addr)
 }
 
 #include "socket.c.inc"
+#include "host-info.c.inc"
 
 static abi_long guest_utimensat(abi_long a1, abi_ulong a2,
                                abi_ulong a3, abi_long a4, bool wide)
