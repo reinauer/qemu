@@ -455,8 +455,20 @@ return "recvmsg";
 
 
 
+#ifdef TARGET_NR_symlink
+case TARGET_NR_symlink:
+return "symlink";
+#endif
 
+#ifdef TARGET_NR_symlinkat
+case TARGET_NR_symlinkat:
+return "symlinkat";
+#endif
 
+#ifdef TARGET_NR_utimensat
+case TARGET_NR_utimensat:
+return "utimensat";
+#endif
 
 #ifdef TARGET_NR_clock_gettime64
 case TARGET_NR_clock_gettime64:
@@ -473,6 +485,10 @@ return "clock_nanosleep_time64";
 #ifdef TARGET_NR_futex_time64
 case TARGET_NR_futex_time64:
 return "futex_time64";
+#endif
+#ifdef TARGET_NR_utimensat_time64
+case TARGET_NR_utimensat_time64:
+return "utimensat_time64";
 #endif
 #ifdef TARGET_NR_set_thread_area
 case TARGET_NR_set_thread_area:

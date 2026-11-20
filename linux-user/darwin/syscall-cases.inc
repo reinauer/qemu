@@ -1146,3 +1146,38 @@ case TARGET_NR_recvmsg: {
     return guest_message(a1, a2, a3, false);
 }
 #endif
+#ifdef TARGET_NR_symlink
+case TARGET_NR_symlink: {
+    char *target = lock_user_string(a1);
+    char *link = lock_user_string(a2);
+    if (!target || !link) {
+        unlock_user(target, a1, 0);
+        unlock_user(link, a2, 0);
+        return -TARGET_EFAULT;
+    }
+    ret = get_errno(symlink(target, path(link)));
+    unlock_user(target, a1, 0);
+    unlock_user(link, a2, 0);
+    return ret;
+}
+#endif
+#ifdef TARGET_NR_symlinkat
+case TARGET_NR_symlinkat: {
+    char *target = lock_user_string(a1);
+    char *link = lock_user_string(a3);
+    if (!target || !link) {
+        unlock_user(target, a1, 0);
+        unlock_user(link, a3, 0);
+        return -TARGET_EFAULT;
+    }
+    ret = get_errno(symlinkat(target, host_dirfd(a2), path(link)));
+    unlock_user(target, a1, 0);
+    unlock_user(link, a3, 0);
+    return ret;
+}
+#endif
+#ifdef TARGET_NR_utimensat
+case TARGET_NR_utimensat: {
+    return guest_utimensat(a1, a2, a3, a4, false);
+}
+#endif

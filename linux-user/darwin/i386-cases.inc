@@ -44,6 +44,8 @@ case TARGET_NR_clock_nanosleep_time64: {
 }
 case TARGET_NR_futex_time64:
     return guest_futex(a1, a2, a3, a4, a6, true);
+case TARGET_NR_utimensat_time64:
+    return guest_utimensat(a1, a2, a3, a4, true);
 case TARGET_NR_set_thread_area:
     return do_set_thread_area(env, a1);
 case TARGET_NR_get_thread_area:

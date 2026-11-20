@@ -1222,6 +1222,58 @@ static abi_long guest_rusage(int who, abi_ulong addr)
 
 #include "socket.c.inc"
 
+static abi_long guest_utimensat(abi_long a1, abi_ulong a2,
+                               abi_ulong a3, abi_long a4, bool wide)
+{
+    struct target_timespec times[2];
+    uint64_t times64[4];
+    abi_long ret;
+    void *p;
+    struct timespec native[2];
+    if (a4 & ~(TARGET_AT_SYMLINK_NOFOLLOW | TARGET_AT_EMPTY_PATH)) {
+        return -TARGET_EINVAL;
+    }
+    if (a3) {
+        if (wide ? copy_from_user(times64, a3, sizeof(times64))
+                 : copy_from_user(times, a3, sizeof(times))) {
+            return -TARGET_EFAULT;
+        }
+        for (int i = 0; i < 2; i++) {
+            int64_t nsec = wide ? (int64_t)tswap64(times64[i * 2 + 1])
+                                : (abi_long)tswapal(times[i].tv_nsec);
+            native[i].tv_sec = wide ? (int64_t)tswap64(times64[i * 2])
+                                     : (abi_long)tswapal(times[i].tv_sec);
+            if (nsec == 1073741823) { /* Linux UTIME_NOW */
+                native[i].tv_nsec = UTIME_NOW;
+            } else if (nsec == 1073741822) { /* Linux UTIME_OMIT */
+                native[i].tv_nsec = UTIME_OMIT;
+            } else if (nsec >= 0 && nsec < 1000000000) {
+                native[i].tv_nsec = nsec;
+            } else {
+                return -TARGET_EINVAL;
+            }
+        }
+    }
+    if (!a2) {
+        if (a4) {
+            return -TARGET_EINVAL;
+        }
+        return get_errno(futimens(a1, a3 ? native : NULL));
+    }
+    p = lock_user_string(a2);
+    if (!p) {
+        return -TARGET_EFAULT;
+    }
+    if (!*(char *)p && (a4 & TARGET_AT_EMPTY_PATH)) {
+        ret = get_errno(futimens(a1, a3 ? native : NULL));
+    } else {
+        ret = get_errno(utimensat(host_dirfd(a1), path(p), a3 ? native : NULL,
+            a4 & TARGET_AT_SYMLINK_NOFOLLOW ? AT_SYMLINK_NOFOLLOW : 0));
+    }
+    unlock_user(p, a2, 0);
+    return ret;
+}
+
 static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
                               abi_long a2, abi_long a3, abi_long a4,
                               abi_long a5, abi_long a6)
