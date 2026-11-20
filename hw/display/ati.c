@@ -1051,6 +1051,66 @@ static const MemoryRegionOps ati_mm_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+/*
+ * The memory mapped register aperture can byte swap for big endian hosts,
+ * as set by CONFIG_CNTL APER_REG_ENDIAN: the bytes of each 32 bit word are
+ * then reversed.  AmigaOS's ATIRadeon.chip on the AmigaOne A1222 sets it
+ * to 1 and reads and writes the registers in big endian order after that.
+ * The I/O space view of the registers doesn't swap.
+ */
+static bool ati_mm_swapped(ATIVGAState *s)
+{
+    return s->regs.config_cntl & APER_REG_ENDIAN;
+}
+
+static uint64_t ati_mm_swap_read(void *opaque, hwaddr addr, unsigned int size)
+{
+    ATIVGAState *s = opaque;
+    uint64_t val;
+
+    if (!ati_mm_swapped(s)) {
+        return ati_mm_read(s, addr, size);
+    }
+    switch (size) {
+    case 4:
+        return bswap32(ati_mm_read(s, addr, 4));
+    case 2:
+        val = ati_mm_read(s, addr & ~3, 4);
+        return bswap16(extract32(val, (2 - (addr & 2)) * 8, 16));
+    default:
+        val = ati_mm_read(s, addr & ~3, 4);
+        return extract32(val, (3 - (addr & 3)) * 8, 8);
+    }
+}
+
+static void ati_mm_swap_write(void *opaque, hwaddr addr, uint64_t data,
+                              unsigned int size)
+{
+    ATIVGAState *s = opaque;
+
+    if (!ati_mm_swapped(s)) {
+        ati_mm_write(s, addr, data, size);
+        return;
+    }
+    switch (size) {
+    case 4:
+        ati_mm_write(s, addr, bswap32(data), 4);
+        break;
+    case 2:
+        ati_mm_write(s, (addr & ~3) + (2 - (addr & 2)), bswap16(data), 2);
+        break;
+    default:
+        ati_mm_write(s, (addr & ~3) + (3 - (addr & 3)), data, 1);
+        break;
+    }
+}
+
+static const MemoryRegionOps ati_mm_swap_ops = {
+    .read = ati_mm_swap_read,
+    .write = ati_mm_swap_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 static void ati_vga_realize(PCIDevice *dev, Error **errp)
 {
     ATIVGAState *s = ATI_VGA(dev);
@@ -1109,10 +1169,10 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     qdev_realize(DEVICE(&s->i2cddc), BUS(i2cbus), &error_abort);
 
     /* mmio register space */
-    memory_region_init_io(&s->mm, OBJECT(s), &ati_mm_ops, s,
+    memory_region_init_io(&s->mm, OBJECT(s), &ati_mm_swap_ops, s,
                           "ati.mmregs", 0x4000);
-    /* io space is alias to beginning of mmregs */
-    memory_region_init_alias(&s->io, OBJECT(s), "ati.io", &s->mm, 0, 0x100);
+    /* io space is the beginning of mmregs, without byte swapping */
+    memory_region_init_io(&s->io, OBJECT(s), &ati_mm_ops, s, "ati.io", 0x100);
 
     /*
      * The framebuffer is at the beginning of the linear aperture. For
