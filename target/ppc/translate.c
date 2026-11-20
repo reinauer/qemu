@@ -3405,6 +3405,20 @@ static void gen_mfdcrx(DisasContext *ctx)
 
 /* mtdcrx */
 /* XXX: not implemented on 440 ? */
+/*
+ * mfpmr/mtpmr: the performance monitor registers of the e500 cores.  The
+ * performance monitor isn't modelled: they read as zero and ignore writes,
+ * which the AmigaOS kernel of the A1222 needs at boot.
+ */
+static void gen_mfpmr(DisasContext *ctx)
+{
+    tcg_gen_movi_tl(cpu_gpr[rD(ctx->opcode)], 0);
+}
+
+static void gen_mtpmr(DisasContext *ctx)
+{
+}
+
 static void gen_mtdcrx(DisasContext *ctx)
 {
 #if defined(CONFIG_USER_ONLY)
@@ -4468,6 +4482,8 @@ GEN_HANDLER(mfapidi, 0x1F, 0x13, 0x08, 0x0000F801, PPC_MFAPIDI),
 GEN_HANDLER(tlbiva, 0x1F, 0x12, 0x18, 0x03FFF801, PPC_TLBIVA),
 GEN_HANDLER(mfdcr, 0x1F, 0x03, 0x0A, 0x00000001, PPC_DCR),
 GEN_HANDLER(mtdcr, 0x1F, 0x03, 0x0E, 0x00000001, PPC_DCR),
+GEN_HANDLER(mfpmr, 0x1F, 0x0E, 0x0A, 0x00000001, PPC_SPE),
+GEN_HANDLER(mtpmr, 0x1F, 0x0E, 0x0E, 0x00000001, PPC_SPE),
 GEN_HANDLER(mfdcrx, 0x1F, 0x03, 0x08, 0x00000000, PPC_DCRX),
 GEN_HANDLER(mtdcrx, 0x1F, 0x03, 0x0C, 0x00000000, PPC_DCRX),
 GEN_HANDLER(dccci, 0x1F, 0x06, 0x0E, 0x03E00001, PPC_4xx_COMMON),
