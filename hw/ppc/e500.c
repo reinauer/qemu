@@ -15,6 +15,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
 #include "qemu/guest-random.h"
@@ -902,6 +903,44 @@ static void ppce500_power_off(void *opaque, int line, int on)
     }
 }
 
+/*
+ * The local access registers at the start of CCSR.  CCSRBAR reads back the
+ * CCSR base, which software such as the AmigaOS kernel of the A1222 maps
+ * CCSR by.  The others, among them the local access windows, which that
+ * kernel finds its PCIe controllers by, hold what firmware writes to them,
+ * without changing the address map.
+ */
+static uint64_t e500_lac_read(void *opaque, hwaddr addr, unsigned size)
+{
+    PPCE500MachineState *pms = opaque;
+    PPCE500MachineClass *pmc = PPCE500_MACHINE_GET_CLASS(pms);
+
+    if (addr == 0) {
+        return (pmc->ccsrbar_base >> 12) & 0x00ffff00;
+    }
+    return pms->lac_regs[addr >> 2];
+}
+
+static void e500_lac_write(void *opaque, hwaddr addr, uint64_t val,
+                           unsigned size)
+{
+    PPCE500MachineState *pms = opaque;
+
+    if (addr == 0) {
+        qemu_log_mask(LOG_UNIMP, "e500: moving CCSR to 0x%" PRIx64
+                      " not supported\n", (val & 0x00ffff00) << 12);
+        return;
+    }
+    pms->lac_regs[addr >> 2] = val;
+}
+
+static const MemoryRegionOps e500_lac_ops = {
+    .read = e500_lac_read,
+    .write = e500_lac_write,
+    .endianness = DEVICE_BIG_ENDIAN,
+    .valid = { .min_access_size = 4, .max_access_size = 4 },
+};
+
 void ppce500_init(MachineState *machine)
 {
     MemoryRegion *address_space_mem = get_system_memory();
@@ -1001,6 +1040,10 @@ void ppce500_init(MachineState *machine)
     ccsr_addr_space = sysbus_mmio_get_region(s, 0);
     memory_region_add_subregion(address_space_mem, pmc->ccsrbar_base,
                                 ccsr_addr_space);
+
+    memory_region_init_io(&pms->lac, OBJECT(machine), &e500_lac_ops, pms,
+                          "e500-local-access", 0x1000);
+    memory_region_add_subregion(ccsr_addr_space, 0, &pms->lac);
 
     mpicdev = ppce500_init_mpic(pms, ccsr_addr_space, irqs);
     g_free(irqs);

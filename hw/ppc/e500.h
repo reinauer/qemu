@@ -15,6 +15,10 @@ struct PPCE500MachineState {
      * board supports dynamic sysbus devices
      */
     PlatformBusDevice *pbus_dev;
+
+    /* The local access registers at the start of CCSR */
+    MemoryRegion lac;
+    uint32_t lac_regs[0x1000 / 4];
 };
 
 struct PPCE500MachineClass {
