@@ -26,8 +26,11 @@
 #include "hw/i2c/bitbang_i2c.h"
 #include "hw/i2c/i2c.h"
 #include "hw/ide/fsl-sata.h"
+#include "hw/net/fsl_etsec/etsec.h"
+#include "hw/net/fsl_etsec_mdio.h"
 #include "hw/rtc/mcp7940.h"
 #include "hw/usb/hcd-ehci.h"
+#include "net/net.h"
 #include "system/blockdev.h"
 #include "system/system.h"
 #include "system/device_tree.h"
@@ -113,6 +116,22 @@ static const struct {
 #define A1222_CODEC_ADDR    0x1a
 #define A1222_CODEC_MCLK    12288000
 
+/*
+ * The P1022's two eTSEC 2.0 Ethernet controllers, with the interrupts of
+ * their first queue group (transmit, receive, error), and the MDIO block
+ * and PHY address that AmigaOS's A1222eth.device uses with each, as its
+ * unit 0 and 1
+ */
+static const struct {
+    hwaddr offset;
+    int irq[3];
+    hwaddr mdio_offset;
+    uint8_t phy_addr;
+} a1222_etsec[] = {
+    { 0xb0000, { 29, 30, 34 }, 0x24000, 3 },
+    { 0xb1000, { 35, 36, 40 }, 0x25000, 7 },
+};
+
 static void a1222_fixup_devtree(void *fdt)
 {
     const char model[] = "AmigaOne A1222";
@@ -128,6 +147,61 @@ static void a1222_fixup_devtree(void *fdt)
                      sizeof(compatible));
 
     /* Backwards, as each new node goes first, to list them in order */
+    for (i = ARRAY_SIZE(a1222_etsec) - 1; i >= 0; i--) {
+        g_autofree char *mdio = g_strdup_printf("%s/mdio@%" HWADDR_PRIx, soc,
+                                                a1222_etsec[i].mdio_offset);
+        g_autofree char *phy = g_strdup_printf("%s/ethernet-phy@%x", mdio,
+                                               a1222_etsec[i].phy_addr);
+        g_autofree char *node = g_strdup_printf("%s/ethernet@%" HWADDR_PRIx,
+                                                soc, a1222_etsec[i].offset);
+        g_autofree char *group = g_strdup_printf("%s/queue-group@%" HWADDR_PRIx,
+                                                 node, a1222_etsec[i].offset);
+        g_autofree char *name = g_strdup_printf("etsec%d", i);
+        Object *obj = object_resolve_path_component(OBJECT(qdev_get_machine()),
+                                                    name);
+        eTSEC *etsec;
+
+        if (!obj) {
+            continue;
+        }
+        etsec = ETSEC_COMMON(obj);
+
+        qemu_fdt_add_subnode(fdt, mdio);
+        qemu_fdt_setprop_string(fdt, mdio, "compatible", "fsl,etsec2-mdio");
+        qemu_fdt_setprop_cells(fdt, mdio, "reg", a1222_etsec[i].mdio_offset,
+                               0x1000, a1222_etsec[i].offset + 0x30, 4);
+        qemu_fdt_setprop_cell(fdt, mdio, "#address-cells", 1);
+        qemu_fdt_setprop_cell(fdt, mdio, "#size-cells", 0);
+        qemu_fdt_add_subnode(fdt, phy);
+        qemu_fdt_setprop_cell(fdt, phy, "reg", a1222_etsec[i].phy_addr);
+        qemu_fdt_setprop_string(fdt, phy, "device_type", "ethernet-phy");
+        qemu_fdt_setprop_cell(fdt, phy, "phandle",
+                              qemu_fdt_alloc_phandle(fdt));
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop_string(fdt, node, "device_type", "network");
+        qemu_fdt_setprop_string(fdt, node, "model", "eTSEC");
+        qemu_fdt_setprop_string(fdt, node, "compatible", "fsl,etsec2");
+        qemu_fdt_setprop_cell(fdt, node, "cell-index", i);
+        qemu_fdt_setprop_cell(fdt, node, "fsl,num_rx_queues", 1);
+        qemu_fdt_setprop_cell(fdt, node, "fsl,num_tx_queues", 1);
+        qemu_fdt_setprop(fdt, node, "local-mac-address",
+                         etsec->conf.macaddr.a, sizeof(etsec->conf.macaddr.a));
+        qemu_fdt_setprop_phandle(fdt, node, "phy-handle", phy);
+        qemu_fdt_setprop_string(fdt, node, "phy-connection-type", "rgmii-id");
+        qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+        qemu_fdt_setprop_cell(fdt, node, "#address-cells", 1);
+        qemu_fdt_setprop_cell(fdt, node, "#size-cells", 1);
+        qemu_fdt_setprop(fdt, node, "ranges", NULL, 0);
+        qemu_fdt_add_subnode(fdt, group);
+        qemu_fdt_setprop_cells(fdt, group, "reg", a1222_etsec[i].offset,
+                               0x1000);
+        qemu_fdt_setprop_cells(fdt, group, "interrupts",
+                               a1222_etsec[i].irq[0], 2,
+                               a1222_etsec[i].irq[1], 2,
+                               a1222_etsec[i].irq[2], 2);
+    }
+
     for (i = ARRAY_SIZE(a1222_sata) - 1; i >= 0; i--) {
         g_autofree char *node = g_strdup_printf("%s/sata@%" HWADDR_PRIx, soc,
                                                 a1222_sata[i].offset);
@@ -263,6 +337,45 @@ static void a1222_init_usb(MachineState *machine)
         sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(mpic, a1222_usb[i].irq));
         memory_region_add_subregion(ccsr_space, a1222_usb[i].offset,
                                     sysbus_mmio_get_region(sbd, 0));
+    }
+}
+
+/*
+ * The Ethernet controllers, each with its MDIO block and the PHY on it.
+ * The eTSECs exist before the rest of the machine, so that they get the
+ * first -nic without a model before PCI does.
+ */
+static void a1222_init_net(MachineState *machine, DeviceState **etsec,
+                           int num_etsec)
+{
+    DeviceState *mpic = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "pic"));
+    SysBusDevice *ccsr = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "e500-ccsr"));
+    MemoryRegion *ccsr_space = sysbus_mmio_get_region(ccsr, 0);
+    int i, j;
+
+    for (i = 0; i < num_etsec; i++) {
+        SysBusDevice *sbd = SYS_BUS_DEVICE(etsec[i]);
+        DeviceState *mdio = qdev_new(TYPE_FSL_ETSEC_MDIO);
+        g_autofree char *name = g_strdup_printf("mdio%d", i);
+
+        sysbus_realize_and_unref(sbd, &error_fatal);
+        for (j = 0; j < ARRAY_SIZE(a1222_etsec[i].irq); j++) {
+            sysbus_connect_irq(sbd, j,
+                               qdev_get_gpio_in(mpic, a1222_etsec[i].irq[j]));
+        }
+        memory_region_add_subregion(ccsr_space, a1222_etsec[i].offset,
+                                    sysbus_mmio_get_region(sbd, 0));
+
+        object_property_add_child(OBJECT(machine), name, OBJECT(mdio));
+        object_property_set_link(OBJECT(mdio), "etsec", OBJECT(etsec[i]),
+                                 &error_fatal);
+        qdev_prop_set_uint8(mdio, "phy-addr", a1222_etsec[i].phy_addr);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(mdio), &error_fatal);
+        memory_region_add_subregion(ccsr_space, a1222_etsec[i].mdio_offset,
+                                    sysbus_mmio_get_region(
+                                        SYS_BUS_DEVICE(mdio), 0));
     }
 }
 
@@ -421,12 +534,32 @@ static void a1222_init_audio(MachineState *machine)
 
 static void a1222_init(MachineState *machine)
 {
+    DeviceState *etsec[ARRAY_SIZE(a1222_etsec)];
+    int i;
+
     if (machine->ram_size > 2 * GiB) {
         error_report("The A1222 machine supports up to 2GB of RAM");
         exit(1);
     }
 
+    /*
+     * The first eTSEC, the A1222's Ethernet port, takes the first -nic
+     * without a model.  The second one, which the board leaves unused,
+     * is there only for a further -nic with model=eTSEC.
+     */
+    for (i = 0; i < ARRAY_SIZE(a1222_etsec); i++) {
+        g_autofree char *name = g_strdup_printf("etsec%d", i);
+
+        if (i > 0 && !qemu_find_nic_info(TYPE_ETSEC_COMMON, false, NULL)) {
+            break;
+        }
+        etsec[i] = qdev_new(TYPE_ETSEC_COMMON);
+        object_property_add_child(OBJECT(machine), name, OBJECT(etsec[i]));
+        qemu_configure_nic_device(etsec[i], i == 0, NULL);
+    }
+
     ppce500_init(machine);
+    a1222_init_net(machine, etsec, i);
     a1222_init_sata(machine);
     a1222_init_usb(machine);
     a1222_init_display(machine);

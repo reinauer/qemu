@@ -193,6 +193,7 @@ config A1222
     select MCP7940
     select FSL_SSI
     select WM8776
+    select ETSEC
 
 config VIRTEX
     bool
