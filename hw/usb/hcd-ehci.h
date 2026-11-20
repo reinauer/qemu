@@ -264,6 +264,13 @@ struct EHCIState {
      * set), so that a port neither reports nor talks to a device while off
      */
     bool port_power_control;
+    /*
+     * The root hub has an embedded transaction translator, as on the
+     * ChipIdea (TDI) controllers: low and full speed devices sit on its
+     * ports directly rather than on a companion controller, and PORTSC
+     * reports the speed of the attached device in its PSPD field.
+     */
+    bool embedded_tt;
 
     /* properties */
     uint32_t maxframes;
@@ -392,6 +399,7 @@ struct SysBusEHCIClass {
     uint16_t portscbase;
     uint16_t portnr;
     bool port_power_control;
+    bool embedded_tt;
 };
 
 OBJECT_DECLARE_SIMPLE_TYPE(FUSBH200EHCIState, FUSBH200_EHCI)

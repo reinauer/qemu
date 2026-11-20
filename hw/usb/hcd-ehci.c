@@ -991,10 +991,25 @@ static uint64_t ehci_port_read(void *ptr, hwaddr addr,
                                unsigned size)
 {
     EHCIState *s = ptr;
+    int port = addr >> 2;
+    USBDevice *dev = s->ports[port].dev;
     uint32_t val;
 
-    val = s->portsc[addr >> 2];
-    trace_usb_ehci_portsc_read(addr + s->portscbase, addr >> 2, val);
+    val = s->portsc[port];
+    if (s->embedded_tt && (val & PORTSC_CONNECT) && dev) {
+        switch (dev->speed) {
+        case USB_SPEED_LOW:
+            val |= PORTSC_PSPD_LOW << PORTSC_PSPD_SH;
+            break;
+        case USB_SPEED_HIGH:
+            val |= PORTSC_PSPD_HIGH << PORTSC_PSPD_SH;
+            break;
+        default:
+            val |= PORTSC_PSPD_FULL << PORTSC_PSPD_SH;
+            break;
+        }
+    }
+    trace_usb_ehci_portsc_read(addr + s->portscbase, port, val);
     return val;
 }
 
@@ -1092,10 +1107,11 @@ static void ehci_port_write(void *ptr, hwaddr addr,
 
         /*
          *  Table 2.16 Set the enable bit(and enable bit change) to indicate
-         *  to SW that this port has a high speed device attached
+         *  to SW that this port has a high speed device attached.  With an
+         *  embedded TT, the port serves devices of any speed itself.
          */
         if (dev && dev->attached && ehci_port_powered(s, port) &&
-            (dev->speedmask & USB_SPEED_MASK_HIGH)) {
+            (s->embedded_tt || (dev->speedmask & USB_SPEED_MASK_HIGH))) {
             val |= PORTSC_PED;
         }
     }
@@ -2691,7 +2707,9 @@ void usb_ehci_realize(EHCIState *s, DeviceState *dev, Error **errp)
                 &ehci_bus_ops_companion : &ehci_bus_ops_standalone, dev);
     for (i = 0; i < s->portnr; i++) {
         usb_register_port(&s->bus, &s->ports[i], s, i, &ehci_port_ops,
-                          USB_SPEED_MASK_HIGH);
+                          USB_SPEED_MASK_HIGH |
+                          (s->embedded_tt ? USB_SPEED_MASK_LOW |
+                                            USB_SPEED_MASK_FULL : 0));
         s->ports[i].dev = 0;
     }
 

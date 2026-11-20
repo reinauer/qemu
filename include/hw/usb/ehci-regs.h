@@ -58,6 +58,11 @@
  */
 #define PORTSC_RO_MASK       0x007001c0
 #define PORTSC_RWC_MASK      0x0000002a
+#define PORTSC_PSPD          (3 << 26)    /* Port Speed (embedded TT) */
+#define PORTSC_PSPD_SH       26           /* Port Speed shift */
+#define PORTSC_PSPD_FULL     0
+#define PORTSC_PSPD_LOW      1
+#define PORTSC_PSPD_HIGH     2
 #define PORTSC_WKOC_E        (1 << 22)    // Wake on Over Current Enable
 #define PORTSC_WKDS_E        (1 << 21)    // Wake on Disconnect Enable
 #define PORTSC_WKCN_E        (1 << 20)    // Wake on Connect Enable
