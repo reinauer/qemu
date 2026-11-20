@@ -407,6 +407,47 @@ const void *HELPER(lookup_tb_ptr)(CPUArchState *env)
     return tb->tc.ptr;
 }
 
+/*
+ * Use a translator-supplied key only for the jump-cache hit.  All misses,
+ * breakpoints and execution logging retain the normal state-based lookup.
+ * Keeping that work out of this helper also keeps its hit path a leaf.
+ */
+const void *HELPER(lookup_tb_ptr_key)(CPUArchState *env, uint64_t pc,
+                                    uint32_t flags, uint64_t cs_base)
+{
+    CPUState *cpu = env_cpu(env);
+    CPUJumpCache *jc = cpu->tb_jmp_cache;
+    uint32_t hash = tb_jmp_cache_hash_func(pc);
+    uint32_t cflags = curr_cflags(cpu);
+    TranslationBlock *tb;
+
+    cpu->neg.can_do_io = true;
+
+#ifdef VERIFY_TB_LOOKUP_KEY
+    TCGTBCPUState actual = cpu->cc->tcg_ops->get_tb_cpu_state(cpu);
+
+    g_assert_cmphex(pc, ==, actual.pc);
+    g_assert_cmphex(flags, ==, actual.flags);
+    g_assert_cmphex(cs_base, ==, actual.cs_base);
+#endif
+
+    if (unlikely((cflags & CF_INVALID) ||
+                 !QTAILQ_EMPTY(&cpu->breakpoints) ||
+                 qemu_loglevel_mask(CPU_LOG_TB_CPU | CPU_LOG_EXEC))) {
+        return HELPER(lookup_tb_ptr)(env);
+    }
+
+    tb = qatomic_read(&jc->array[hash].tb);
+    if (likely(tb && jc->array[hash].pc == pc &&
+               tb->cs_base == cs_base && tb->flags == flags &&
+               tb_cflags(tb) == cflags &&
+               ((cflags & CF_PCREL) || tb->pc == pc))) {
+        return tb->tc.ptr;
+    }
+
+    return HELPER(lookup_tb_ptr)(env);
+}
+
 /* Return the current PC from CPU, which may be cached in TB. */
 static vaddr log_pc(CPUState *cpu, const TranslationBlock *tb)
 {

@@ -173,6 +173,9 @@ typedef struct DisasContext {
  */
 #define DISAS_EOB_RECHECK_TF   DISAS_TARGET_4
 
+/* Near branches preserve the TB mode flags, except for MPX and RF handling. */
+#define DISAS_JUMP_NEAR        DISAS_TARGET_5
+
 /* The environment in which user-only runs is constrained. */
 #ifdef CONFIG_USER_ONLY
 #define PE(S)     true
@@ -2082,10 +2085,20 @@ gen_eob(DisasContext *s, int mode)
         tcg_gen_exit_tb(NULL, 0);
     } else if (s->flags & HF_TF_MASK) {
         gen_helper_single_step(tcg_env);
-    } else if (mode == DISAS_JUMP &&
+    } else if ((mode == DISAS_JUMP || mode == DISAS_JUMP_NEAR) &&
                /* give irqs a chance to happen */
                !inhibit_reset) {
-        tcg_gen_lookup_and_goto_ptr();
+#if defined(CONFIG_USER_ONLY) && defined(TARGET_X86_64)
+        /* Far branches can change CS and the execution mode. */
+        if (mode == DISAS_JUMP_NEAR && CODE64(s) &&
+            !(s->base.tb->flags & (HF_RF_MASK | HF_INHIBIT_IRQ_MASK |
+                                   HF_MPX_EN_MASK))) {
+            tcg_gen_lookup_and_goto_ptr_key(cpu_eip, s->flags, 0);
+        } else
+#endif
+        {
+            tcg_gen_lookup_and_goto_ptr();
+        }
     } else {
         tcg_gen_exit_tb(NULL, 0);
     }
@@ -2144,7 +2157,7 @@ static void gen_jmp_rel(DisasContext *s, MemOp ot, int diff, int tb_num)
             tcg_gen_movi_tl(cpu_eip, new_eip);
         }
         if (s->jmp_opt) {
-            gen_eob(s, DISAS_JUMP);   /* jump to another page */
+            gen_eob(s, DISAS_JUMP_NEAR);   /* jump to another page */
         } else {
             gen_eob(s, DISAS_EOB_ONLY);  /* exit to main loop */
         }
@@ -3694,6 +3707,7 @@ static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
     case DISAS_EOB_ONLY:
     case DISAS_EOB_RECHECK_TF:
     case DISAS_JUMP:
+    case DISAS_JUMP_NEAR:
         gen_eob(dc, dc->base.is_jmp);
         break;
     default:
