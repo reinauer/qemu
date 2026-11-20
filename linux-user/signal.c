@@ -39,6 +39,14 @@
 #include "user/signal.h"
 #include "tcg/tcg.h"
 
+#ifdef __APPLE__
+static int sigorset(sigset_t *dst, const sigset_t *a, const sigset_t *b)
+{
+    *dst = *a | *b;
+    return 0;
+}
+#endif
+
 /* target_siginfo_t must fit in gdbstub's siginfo save area. */
 QEMU_BUILD_BUG_ON(sizeof(target_siginfo_t) > MAX_SIGINFO_LENGTH);
 
@@ -374,8 +382,12 @@ static inline void host_to_target_siginfo_noswap(target_siginfo_t *tinfo,
 
     switch (si_code) {
     case SI_USER:
+#ifdef SI_TKILL
     case SI_TKILL:
+#endif
+#ifdef SI_KERNEL
     case SI_KERNEL:
+#endif
         /* Sent via kill(), tkill() or tgkill(), or direct from the kernel.
          * These are the only unspoofable si_code values.
          */
@@ -395,13 +407,17 @@ static inline void host_to_target_siginfo_noswap(target_siginfo_t *tinfo,
                 tinfo->_sifields._sigchld._status
                     = host_to_target_signal(info->si_status & 0x7f)
                         | (info->si_status & ~0x7f);
+#ifndef __APPLE__
             tinfo->_sifields._sigchld._utime = info->si_utime;
             tinfo->_sifields._sigchld._stime = info->si_stime;
+#endif
             si_type = QEMU_SI_CHLD;
             break;
         case TARGET_SIGIO:
             tinfo->_sifields._sigpoll._band = info->si_band;
+#ifndef __APPLE__
             tinfo->_sifields._sigpoll._fd = info->si_fd;
+#endif
             si_type = QEMU_SI_POLL;
             break;
         default:
@@ -417,6 +433,19 @@ static inline void host_to_target_siginfo_noswap(target_siginfo_t *tinfo,
         break;
     }
 
+#ifdef __APPLE__
+    switch (si_code) {
+    case SI_USER:
+        si_code = TARGET_SI_USER;
+        break;
+    case SI_QUEUE:
+        si_code = TARGET_SI_QUEUE;
+        break;
+    case SI_TIMER:
+        si_code = TARGET_SI_TIMER;
+        break;
+    }
+#endif
     tinfo->si_code = deposit32(si_code, 16, 16, si_type);
 }
 
@@ -526,6 +555,13 @@ static void signal_table_init(const char *rtsig_map)
 {
     int hsig, tsig, count;
 
+#ifdef __APPLE__
+    if (rtsig_map) {
+        error_report("Darwin does not support realtime signal mappings");
+        exit(EXIT_FAILURE);
+    }
+    host_interrupt_signal = SIGEMT;
+#else
     if (rtsig_map) {
         /*
          * Map host RT signals to target RT signals according to the
@@ -622,6 +658,8 @@ static void signal_table_init(const char *rtsig_map)
                 "No rt signals left for interrupt and SIGABRT mapping\n");
         exit(EXIT_FAILURE);
     }
+
+#endif
 
     /* Invert the mapping that has already been assigned. */
     for (hsig = 1; hsig < _NSIG; hsig++) {
@@ -870,6 +908,7 @@ void queue_signal(CPUArchState *env, int sig, int si_type,
 /* Adjust the signal context to rewind out of safe-syscall if we're in it */
 static inline void rewind_if_in_safe_syscall(void *puc)
 {
+#ifndef __APPLE__
     host_sigcontext *uc = (host_sigcontext *)puc;
     uintptr_t pcreg = host_signal_pc(uc);
 
@@ -877,6 +916,7 @@ static inline void rewind_if_in_safe_syscall(void *puc)
         && pcreg < (uintptr_t)safe_syscall_end) {
         host_signal_set_pc(uc, (uintptr_t)safe_syscall_start);
     }
+#endif
 }
 
 static G_NORETURN
@@ -1046,8 +1086,42 @@ static void host_signal_handler(int host_sig, siginfo_t *info, void *puc)
     int guest_sig;
     uintptr_t pc = 0;
     bool sync_sig = false;
-    void *sigmask;
+    sigset_t *sigmask;
 
+#ifdef __APPLE__
+    if (host_sig == SIGSEGV || host_sig == SIGBUS) {
+        uint32_t esr = uc->uc_mcontext->__es.__esr;
+        uint32_t fault = esr & 0x3f;
+        /* Darwin reports data-abort protection faults as SIGBUS/BUS_ADRALN.
+         * Decode the ARM fault status rather than treating them as genuine
+         * unaligned guest accesses.
+         */
+        if (extract32(esr, 27, 5) == 0x12 &&
+            ((fault >= 4 && fault <= 15))) {
+            bool protection = fault >= 12;
+            uintptr_t addr = (uintptr_t)info->si_addr;
+
+            /*
+             * A nonresident protected page can first raise a translation
+             * fault. Darwin then rejects the access and sends SIGBUS, but
+             * leaves that original fault status in ESR. In particular,
+             * writes to TB-protected pages must still reach page_unprotect.
+             * Do not turn faults on accessible pages (e.g. beyond EOF)
+             * into protection faults, which would retry them indefinitely.
+             */
+            if (!protection && host_sig == SIGBUS && h2g_valid(addr)) {
+                int flags = page_get_flags(h2g_nocheck(addr));
+                int access = host_signal_write(info, uc) ? PAGE_WRITE
+                                                        : PAGE_READ;
+
+                protection = (flags & PAGE_VALID) && !(flags & access);
+            }
+            host_sig = SIGSEGV;
+            info->si_signo = SIGSEGV;
+            info->si_code = protection ? SEGV_ACCERR : SEGV_MAPERR;
+        }
+    }
+#endif
     if (host_sig == host_interrupt_signal) {
         ts->signal_pending = 1;
         cpu_exit(thread_cpu);

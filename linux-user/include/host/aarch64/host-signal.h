@@ -14,6 +14,25 @@
 /* The third argument to a SA_SIGINFO handler is ucontext_t. */
 typedef ucontext_t host_sigcontext;
 
+#ifdef __APPLE__
+static inline uintptr_t host_signal_pc(host_sigcontext *uc)
+{
+    return uc->uc_mcontext->__ss.__pc;
+}
+static inline void host_signal_set_pc(host_sigcontext *uc, uintptr_t pc)
+{
+    uc->uc_mcontext->__ss.__pc = pc;
+}
+static inline void *host_signal_mask(host_sigcontext *uc)
+{
+    return &uc->uc_sigmask;
+}
+static inline bool host_signal_write(siginfo_t *info, host_sigcontext *uc)
+{
+    uint64_t esr = uc->uc_mcontext->__es.__esr;
+    return extract32(esr, 27, 5) == 0x12 && extract32(esr, 6, 1);
+}
+#else
 /* Pre-3.16 kernel headers don't have these, so provide fallback definitions */
 #ifndef ESR_MAGIC
 #define ESR_MAGIC 0x45535201
@@ -84,4 +103,5 @@ static inline bool host_signal_write(siginfo_t *info, host_sigcontext *uc)
         || (insn & 0x3a400000) == 0x28000000; /* C3.3.7,14-16 */
 }
 
+#endif /* __APPLE__ */
 #endif
