@@ -378,6 +378,7 @@ struct EHCIPCIState {
 #define TYPE_TEGRA2_EHCI "tegra2-ehci-usb"
 #define TYPE_PPC4xx_EHCI "ppc4xx-ehci-usb"
 #define TYPE_FUSBH200_EHCI "fusbh200-ehci-usb"
+#define TYPE_FSL_EHCI "fsl-ehci-usb"
 
 OBJECT_DECLARE_TYPE(EHCISysBusState, SysBusEHCIClass, SYS_BUS_EHCI)
 
@@ -410,6 +411,23 @@ struct FUSBH200EHCIState {
     /*< public >*/
 
     MemoryRegion mem_vendor;
+};
+
+OBJECT_DECLARE_SIMPLE_TYPE(FSLEHCIState, FSL_EHCI)
+
+/* SNOOP1, SNOOP2, AGE_CNT_THRESH, PRI_CTRL and SI_CTRL */
+#define FSL_EHCI_SYSIF_REGS 5
+
+struct FSLEHCIState {
+    /*< private >*/
+    EHCISysBusState parent_obj;
+    /*< public >*/
+
+    MemoryRegion mem_core;
+    MemoryRegion mem_sysif;
+    uint32_t usbmode;
+    uint32_t sysif[FSL_EHCI_SYSIF_REGS];
+    uint32_t control;
 };
 
 #endif

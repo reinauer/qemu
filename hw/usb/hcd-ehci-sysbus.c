@@ -19,6 +19,8 @@
 #include "hw/core/qdev-properties.h"
 #include "hw/usb/hcd-ehci.h"
 #include "migration/vmstate.h"
+#include "qemu/log.h"
+#include "trace.h"
 
 static const VMStateDescription vmstate_ehci_sysbus = {
     .name        = "ehci-sysbus",
@@ -234,6 +236,206 @@ static void fusbh200_ehci_class_init(ObjectClass *oc, const void *data)
     set_bit(DEVICE_CATEGORY_USB, dc->categories);
 }
 
+/*
+ * Freescale (now NXP) dual-role USB controller of the MPC83xx, MPC85xx and
+ * QorIQ P10xx/P20xx SoCs, in host mode.  It is a ChipIdea (TDI) core: the
+ * EHCI capability and operational registers sit at 0x100 and 0x140, between
+ * the core's own registers, and the root hub port has an embedded TT and
+ * port power control.  Freescale's system interface registers follow at
+ * 0x400; unlike the rest, they are big-endian.
+ */
+
+/* ChipIdea core registers outside of the EHCI blocks */
+#define FSL_EHCI_DCCPARAMS      0x124
+#define FSL_EHCI_DCCPARAMS_HC   (1 << 8)        /* host capable */
+#define FSL_EHCI_USBMODE        0x1a8
+#define FSL_EHCI_USBMODE_CM     (3 << 0)        /* controller mode */
+#define FSL_EHCI_USBMODE_CM_HOST 3
+#define FSL_EHCI_USBMODE_ES     (1 << 2)        /* big-endian buffers */
+#define FSL_EHCI_USBMODE_MASK   0x1f
+
+/* System interface registers, as offsets in their block at 0x400 */
+#define FSL_EHCI_SYSIF_BASE     0x400
+#define FSL_EHCI_SNOOP1         0x000
+#define FSL_EHCI_SI_CTRL        0x010
+#define FSL_EHCI_CONTROL        0x100
+#define FSL_EHCI_CONTROL_PHY_CLK_VALID (1 << 17)
+
+static uint64_t fsl_ehci_core_read(void *opaque, hwaddr addr, unsigned size)
+{
+    FSLEHCIState *f = opaque;
+    uint32_t val = 0;
+
+    switch (addr) {
+    case FSL_EHCI_DCCPARAMS:
+        /* The device side of the dual-role controller is not modelled */
+        val = FSL_EHCI_DCCPARAMS_HC;
+        break;
+    case FSL_EHCI_USBMODE:
+        val = f->usbmode;
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented register 0x%03" HWADDR_PRIx
+                      "\n", __func__, addr);
+        break;
+    }
+
+    trace_usb_ehci_fsl_core_read(addr, val);
+    return val;
+}
+
+static void fsl_ehci_core_write(void *opaque, hwaddr addr, uint64_t val,
+                                unsigned size)
+{
+    FSLEHCIState *f = opaque;
+
+    trace_usb_ehci_fsl_core_write(addr, val);
+
+    switch (addr) {
+    case FSL_EHCI_USBMODE:
+        f->usbmode = val & FSL_EHCI_USBMODE_MASK;
+        if ((val & FSL_EHCI_USBMODE_CM) &&
+            (val & FSL_EHCI_USBMODE_CM) != FSL_EHCI_USBMODE_CM_HOST) {
+            qemu_log_mask(LOG_UNIMP, "%s: device mode not supported\n",
+                          __func__);
+        }
+        if (val & FSL_EHCI_USBMODE_ES) {
+            qemu_log_mask(LOG_UNIMP, "%s: big-endian buffers not supported\n",
+                          __func__);
+        }
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented register 0x%03" HWADDR_PRIx
+                      " = 0x%" PRIx64 "\n", __func__, addr, val);
+        break;
+    }
+}
+
+static const MemoryRegionOps fsl_ehci_core_ops = {
+    .read = fsl_ehci_core_read,
+    .write = fsl_ehci_core_write,
+    .valid.min_access_size = 4,
+    .valid.max_access_size = 4,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+static uint64_t fsl_ehci_sysif_read(void *opaque, hwaddr addr, unsigned size)
+{
+    FSLEHCIState *f = opaque;
+    uint32_t val = 0;
+
+    switch (addr) {
+    case FSL_EHCI_SNOOP1 ... FSL_EHCI_SI_CTRL:
+        val = f->sysif[(addr - FSL_EHCI_SNOOP1) >> 2];
+        break;
+    case FSL_EHCI_CONTROL:
+        /* The PHY is always up and running */
+        val = f->control | FSL_EHCI_CONTROL_PHY_CLK_VALID;
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented register 0x%03" HWADDR_PRIx
+                      "\n", __func__, addr + FSL_EHCI_SYSIF_BASE);
+        break;
+    }
+
+    trace_usb_ehci_fsl_sysif_read(addr + FSL_EHCI_SYSIF_BASE, val);
+    return val;
+}
+
+static void fsl_ehci_sysif_write(void *opaque, hwaddr addr, uint64_t val,
+                                 unsigned size)
+{
+    FSLEHCIState *f = opaque;
+
+    trace_usb_ehci_fsl_sysif_write(addr + FSL_EHCI_SYSIF_BASE, val);
+
+    switch (addr) {
+    case FSL_EHCI_SNOOP1 ... FSL_EHCI_SI_CTRL:
+        /*
+         * Snooping windows, bus priorities and the like: QEMU's DMA is
+         * coherent anyway, so these only need to read back.
+         */
+        f->sysif[(addr - FSL_EHCI_SNOOP1) >> 2] = val;
+        break;
+    case FSL_EHCI_CONTROL:
+        /* USB_EN, PHY selection etc. have no effect on the model */
+        f->control = val & ~FSL_EHCI_CONTROL_PHY_CLK_VALID;
+        break;
+    default:
+        qemu_log_mask(LOG_UNIMP, "%s: unimplemented register 0x%03" HWADDR_PRIx
+                      " = 0x%" PRIx64 "\n", __func__,
+                      addr + FSL_EHCI_SYSIF_BASE, val);
+        break;
+    }
+}
+
+static const MemoryRegionOps fsl_ehci_sysif_ops = {
+    .read = fsl_ehci_sysif_read,
+    .write = fsl_ehci_sysif_write,
+    .valid.min_access_size = 4,
+    .valid.max_access_size = 4,
+    .endianness = DEVICE_BIG_ENDIAN,
+};
+
+static void fsl_ehci_reset(DeviceState *dev)
+{
+    EHCISysBusState *i = SYS_BUS_EHCI(dev);
+    FSLEHCIState *f = FSL_EHCI(dev);
+
+    ehci_reset(&i->ehci);
+    f->usbmode = 0;
+    memset(f->sysif, 0, sizeof(f->sysif));
+    f->control = 0;
+}
+
+static void fsl_ehci_init(Object *obj)
+{
+    EHCISysBusState *i = SYS_BUS_EHCI(obj);
+    FSLEHCIState *f = FSL_EHCI(obj);
+    EHCIState *s = &i->ehci;
+
+    /*
+     * The core registers surround the EHCI ones, which take precedence
+     * where they overlap.
+     */
+    memory_region_init_io(&f->mem_core, obj, &fsl_ehci_core_ops, f,
+                          "fsl-ehci-core", FSL_EHCI_SYSIF_BASE);
+    memory_region_add_subregion_overlap(&s->mem, 0, &f->mem_core, -1);
+    memory_region_init_io(&f->mem_sysif, obj, &fsl_ehci_sysif_ops, f,
+                          "fsl-ehci-sysif", 0x200);
+    memory_region_add_subregion(&s->mem, FSL_EHCI_SYSIF_BASE, &f->mem_sysif);
+}
+
+static const VMStateDescription vmstate_fsl_ehci = {
+    .name = "fsl-ehci",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_STRUCT(parent_obj, FSLEHCIState, 1, vmstate_ehci_sysbus,
+                       EHCISysBusState),
+        VMSTATE_UINT32(usbmode, FSLEHCIState),
+        VMSTATE_UINT32_ARRAY(sysif, FSLEHCIState, FSL_EHCI_SYSIF_REGS),
+        VMSTATE_UINT32(control, FSLEHCIState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void fsl_ehci_class_init(ObjectClass *oc, const void *data)
+{
+    SysBusEHCIClass *sec = SYS_BUS_EHCI_CLASS(oc);
+    DeviceClass *dc = DEVICE_CLASS(oc);
+
+    sec->capsbase = 0x100;
+    sec->opregbase = 0x140;
+    sec->portscbase = 0x44;
+    sec->portnr = 1;
+    sec->port_power_control = true;
+    sec->embedded_tt = true;
+    dc->vmsd = &vmstate_fsl_ehci;
+    device_class_set_legacy_reset(dc, fsl_ehci_reset);
+    set_bit(DEVICE_CATEGORY_USB, dc->categories);
+}
+
 static const TypeInfo ehci_sysbus_types[] = {
     {
         .name          = TYPE_SYS_BUS_EHCI,
@@ -282,6 +484,13 @@ static const TypeInfo ehci_sysbus_types[] = {
         .instance_size = sizeof(FUSBH200EHCIState),
         .instance_init = fusbh200_ehci_init,
         .class_init    = fusbh200_ehci_class_init,
+    },
+    {
+        .name          = TYPE_FSL_EHCI,
+        .parent        = TYPE_SYS_BUS_EHCI,
+        .instance_size = sizeof(FSLEHCIState),
+        .instance_init = fsl_ehci_init,
+        .class_init    = fsl_ehci_class_init,
     },
 };
 

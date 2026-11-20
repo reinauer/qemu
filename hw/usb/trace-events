@@ -119,6 +119,12 @@ usb_ehci_periodic_state_advance(uint32_t frame, uint64_t list, uint64_t entry) "
 usb_ehci_skipped_uframes(uint64_t skipped_uframes) "skipped %" PRIu64 " uframes"
 usb_ehci_log(const char *msg) "%s"
 
+# hcd-ehci-sysbus.c
+usb_ehci_fsl_core_read(uint32_t addr, uint32_t val) "rd mmio 0x%03x = 0x%x"
+usb_ehci_fsl_core_write(uint32_t addr, uint32_t val) "wr mmio 0x%03x = 0x%x"
+usb_ehci_fsl_sysif_read(uint32_t addr, uint32_t val) "rd mmio 0x%03x = 0x%x"
+usb_ehci_fsl_sysif_write(uint32_t addr, uint32_t val) "wr mmio 0x%03x = 0x%x"
+
 # hcd-uhci.c
 usb_uhci_reset(void) "=== RESET ==="
 usb_uhci_exit(void) "=== EXIT ==="
