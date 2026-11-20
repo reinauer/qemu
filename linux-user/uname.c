@@ -95,7 +95,7 @@ int sys_uname(struct new_utsname *buf)
   COPY_UTSNAME_FIELD(buf->release, uts_buf.release);
   COPY_UTSNAME_FIELD(buf->version, uts_buf.version);
   COPY_UTSNAME_FIELD(buf->machine, uts_buf.machine);
-#ifdef _GNU_SOURCE
+#if defined(_GNU_SOURCE) && !defined(__APPLE__)
   COPY_UTSNAME_FIELD(buf->domainname, uts_buf.domainname);
 #endif
   return (0);
@@ -153,6 +153,11 @@ void init_qemu_uname_release(void)
      * target kernel version.
      */
     struct new_utsname buf;
+#ifdef __APPLE__
+    if (!qemu_uname_release || !*qemu_uname_release) {
+        qemu_uname_release = "6.6.0";
+    }
+#endif
 
     if (qemu_uname_release && *qemu_uname_release) {
         return;

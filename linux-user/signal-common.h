@@ -134,6 +134,12 @@ static inline void finish_sigsuspend_mask(int ret)
 #define MAKE_SIG_ENTRY_SIGIOT
 #endif
 
+#ifdef SIGPWR
+#define MAKE_SIG_ENTRY_SIGPWR MAKE_SIG_ENTRY(SIGPWR)
+#else
+#define MAKE_SIG_ENTRY_SIGPWR
+#endif
+
 #define MAKE_SIGNAL_LIST \
         MAKE_SIG_ENTRY(SIGHUP) \
         MAKE_SIG_ENTRY(SIGINT) \
@@ -163,7 +169,7 @@ static inline void finish_sigsuspend_mask(int ret)
         MAKE_SIG_ENTRY(SIGPROF) \
         MAKE_SIG_ENTRY(SIGWINCH) \
         MAKE_SIG_ENTRY(SIGIO) \
-        MAKE_SIG_ENTRY(SIGPWR) \
+        MAKE_SIG_ENTRY_SIGPWR \
         MAKE_SIG_ENTRY(SIGSYS) \
         MAKE_SIG_ENTRY_SIGSTKFLT \
         MAKE_SIG_ENTRY_SIGIOT

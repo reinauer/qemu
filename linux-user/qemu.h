@@ -101,6 +101,9 @@ struct emulated_sigtable {
 };
 
 struct TaskState {
+#ifdef __APPLE__
+    pthread_t darwin_thread;
+#endif
     pid_t ts_tid;     /* tid (or pid) of this task */
 #ifdef TARGET_ARM
 # ifdef TARGET_ABI32

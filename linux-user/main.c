@@ -25,7 +25,11 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 #include <sys/shm.h>
+#ifdef __linux__
 #include <linux/binfmts.h>
+#else
+#define AT_FLAGS_PRESERVE_ARGV0 1
+#endif
 
 #include "qapi/error.h"
 #include "qemu.h"
@@ -68,6 +72,10 @@
 #define AT_FLAGS_PRESERVE_ARGV0 (1 << AT_FLAGS_PRESERVE_ARGV0_BIT)
 #endif
 
+#ifdef __APPLE__
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron())
+#endif
 char *exec_path;
 char real_exec_path[PATH_MAX];
 
@@ -124,7 +132,7 @@ unsigned long guest_addr_max;
 
 static void usage(int exitcode);
 
-static const char *interp_prefix = CONFIG_QEMU_INTERP_PREFIX;
+const char *interp_prefix = CONFIG_QEMU_INTERP_PREFIX;
 const char *qemu_uname_release;
 
 #if !defined(TARGET_DEFAULT_STACK_SIZE)
@@ -169,6 +177,9 @@ void fork_end(pid_t pid)
         }
         qemu_init_cpu_list();
         get_task_state(thread_cpu)->ts_tid = qemu_get_thread_id();
+#ifdef __APPLE__
+        get_task_state(thread_cpu)->darwin_thread = pthread_self();
+#endif
     } else {
         cpu_list_unlock();
     }
@@ -192,7 +203,14 @@ bool qemu_cpu_is_self(CPUState *cpu)
 void task_settid(TaskState *ts)
 {
     if (ts->ts_tid == 0) {
+        #ifdef __APPLE__
+        uint64_t tid;
+        pthread_threadid_np(NULL, &tid);
+        ts->darwin_thread = pthread_self();
+        ts->ts_tid = pthread_main_np() ? getpid() : (pid_t)tid;
+#else
         ts->ts_tid = (pid_t)syscall(SYS_gettid);
+#endif
     }
 }
 
@@ -222,7 +240,13 @@ void init_task_state(TaskState *ts)
 
     ticks_per_sec = sysconf(_SC_CLK_TCK);
 
-    if ((ticks_per_sec > 0) && !clock_gettime(CLOCK_BOOTTIME, &bt)) {
+    if ((ticks_per_sec > 0) && !clock_gettime(
+#ifdef __APPLE__
+        CLOCK_MONOTONIC
+#else
+        CLOCK_BOOTTIME
+#endif
+        , &bt)) {
         /* start_boottime is expressed in clock ticks */
         ts->start_boottime = bt.tv_sec * (uint64_t) ticks_per_sec;
         ts->start_boottime += bt.tv_nsec * (uint64_t) ticks_per_sec /

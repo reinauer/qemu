@@ -2,7 +2,9 @@
 #include "qemu/osdep.h"
 #include <sys/param.h>
 
+#ifdef __linux__
 #include <sys/prctl.h>
+#endif
 #include <sys/resource.h>
 
 #include "qemu.h"
@@ -2142,9 +2144,11 @@ static int elf_core_dump(int signr, const CPUArchState *env)
     int fd = -1;
     CPUState *cpu_iter;
 
+#ifdef __linux__
     if (prctl(PR_GET_DUMPABLE) == 0) {
         return 0;
     }
+#endif
 
     if (getrlimit(RLIMIT_CORE, &dumpsize) < 0 || dumpsize.rlim_cur == 0) {
         return 0;
