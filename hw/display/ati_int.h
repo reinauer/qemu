@@ -117,6 +117,7 @@ struct ATIVGAState {
     uint32_t cursor_offset;
     QEMUCursor *cursor;
     QEMUTimer vblank_timer;
+    uint64_t vsync_frame;
     bitbang_i2c_interface bbi2c;
     I2CDDCState i2cddc;
     uint64_t linear_aper_sz;
