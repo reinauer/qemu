@@ -182,6 +182,7 @@ config A1222
     default y
     depends on PPC && FDT
     select E500
+    select FSL_SATA
 
 config VIRTEX
     bool

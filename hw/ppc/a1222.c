@@ -15,20 +15,78 @@
 
 #include "qemu/osdep.h"
 #include "e500.h"
+#include "hw/core/sysbus.h"
+#include "hw/ide/fsl-sata.h"
+#include "system/blockdev.h"
 #include "system/device_tree.h"
 #include "hw/ppc/openpic.h"
+#include "qapi/error.h"
 #include "qemu/error-report.h"
 #include "qemu/units.h"
 #include "target/ppc/cpu.h"
+
+#define A1222_CCSR_BASE     0xFFE00000ULL
+
+/*
+ * The P1022's two SATA controllers, with their CCSR offsets and MPIC
+ * interrupts in device tree numbering (internal interrupt n is 16 + n)
+ */
+static const struct {
+    hwaddr offset;
+    int irq;
+} a1222_sata[] = {
+    { 0x18000, 74 },
+    { 0x19000, 41 },
+};
 
 static void a1222_fixup_devtree(void *fdt)
 {
     const char model[] = "AmigaOne A1222";
     const char compatible[] = "fsl,P1022\0fsl,P1022DS";
+    g_autofree char *soc = g_strdup_printf("/soc@%llx", A1222_CCSR_BASE);
+    /* The MPIC node as ppce500_load_device_tree() names it */
+    g_autofree char *mpic = g_strdup_printf("%s/pic@40000", soc);
+    int i;
 
     qemu_fdt_setprop(fdt, "/", "model", model, sizeof(model));
     qemu_fdt_setprop(fdt, "/", "compatible", compatible,
                      sizeof(compatible));
+
+    /* Backwards, as each new node goes first, to list them in order */
+    for (i = ARRAY_SIZE(a1222_sata) - 1; i >= 0; i--) {
+        g_autofree char *node = g_strdup_printf("%s/sata@%" HWADDR_PRIx, soc,
+                                                a1222_sata[i].offset);
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop_string(fdt, node, "compatible", "fsl,pq-sata-v2");
+        qemu_fdt_setprop_cells(fdt, node, "reg", a1222_sata[i].offset, 0x1000);
+        qemu_fdt_setprop_cell(fdt, node, "cell-index", i + 1);
+        qemu_fdt_setprop_cells(fdt, node, "interrupts", a1222_sata[i].irq, 2);
+        qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+    }
+}
+
+static void a1222_init_sata(MachineState *machine)
+{
+    DeviceState *mpic = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "pic"));
+    SysBusDevice *ccsr = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "e500-ccsr"));
+    MemoryRegion *ccsr_space = sysbus_mmio_get_region(ccsr, 0);
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(a1222_sata); i++) {
+        DeviceState *dev = qdev_new(TYPE_FSL_SATA);
+        SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+        object_property_add_child(OBJECT(machine), "sata[*]", OBJECT(dev));
+        sysbus_realize_and_unref(sbd, &error_fatal);
+        sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(mpic, a1222_sata[i].irq));
+        memory_region_add_subregion(ccsr_space, a1222_sata[i].offset,
+                                    sysbus_mmio_get_region(sbd, 0));
+        /* -drive if=ide,index=i (or -hda/-hdb) attaches to SATA port i */
+        fsl_sata_init_drive(dev, drive_get(IF_IDE, i, 0));
+    }
 }
 
 static void a1222_init(MachineState *machine)
@@ -39,6 +97,7 @@ static void a1222_init(MachineState *machine)
     }
 
     ppce500_init(machine);
+    a1222_init_sata(machine);
 }
 
 static void a1222_machine_class_init(ObjectClass *oc, const void *data)
@@ -54,7 +113,7 @@ static void a1222_machine_class_init(ObjectClass *oc, const void *data)
     pmc->platform_bus_size = 8 * MiB;
     pmc->platform_bus_first_irq = 5;
     pmc->platform_bus_num_irqs = 10;
-    pmc->ccsrbar_base = 0xFFE00000ULL;
+    pmc->ccsrbar_base = A1222_CCSR_BASE;
     /*
      * The PCI controller as the first of the P1022's PCIe controllers, with
      * U-Boot's 36-bit windows for it, which the AmigaOS kernel has built in
@@ -82,6 +141,8 @@ static void a1222_machine_class_init(ObjectClass *oc, const void *data)
     mc->default_ram_size = 2 * GiB;
     mc->default_ram_id = "a1222.ram";
     mc->default_nic = "virtio-net-pci";
+    mc->block_default_type = IF_IDE;
+    mc->units_per_default_bus = 1;
 }
 
 #define TYPE_A1222_MACHINE  MACHINE_TYPE_NAME("a1222")
