@@ -184,6 +184,7 @@ config A1222
     select E500
     select FSL_SATA
     select USB_EHCI_SYSBUS
+    select FSL_DMA
 
 config VIRTEX
     bool

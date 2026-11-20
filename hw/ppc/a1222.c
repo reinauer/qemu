@@ -16,6 +16,7 @@
 #include "qemu/osdep.h"
 #include "e500.h"
 #include "hw/core/sysbus.h"
+#include "hw/dma/fsl-dma.h"
 #include "hw/ide/fsl-sata.h"
 #include "hw/usb/hcd-ehci.h"
 #include "system/blockdev.h"
@@ -50,6 +51,19 @@ static const struct {
 } a1222_usb[] = {
     { 0x22000, 28 },
     { 0x23000, 46 },
+};
+
+/*
+ * The two DMA controllers' channels, and their first channel's interrupt;
+ * DMA1 is "dma" and DMA2 "dma2"
+ */
+static const struct {
+    const char *name;
+    hwaddr offset;
+    int irq;
+} a1222_dma[] = {
+    { "dma", 0x21100, 20 },
+    { "dma2", 0x0c100, 76 },
 };
 
 static void a1222_fixup_devtree(void *fdt)
@@ -141,6 +155,37 @@ static void a1222_init_usb(MachineState *machine)
     }
 }
 
+/*
+ * The DMA controllers, which the AmigaOS kernel hands out to its users
+ * channel by channel: graphics.library copies its shadow of the DIU's frame
+ * buffer through any free channel of either, the audio driver feeds the
+ * SSI through DMA1's first one
+ */
+static void a1222_init_dma(MachineState *machine)
+{
+    DeviceState *mpic = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "pic"));
+    SysBusDevice *ccsr = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "e500-ccsr"));
+    int i, j;
+
+    for (i = 0; i < ARRAY_SIZE(a1222_dma); i++) {
+        DeviceState *dev = qdev_new(TYPE_FSL_DMA);
+        SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+        object_property_add_child(OBJECT(machine), a1222_dma[i].name,
+                                  OBJECT(dev));
+        sysbus_realize_and_unref(sbd, &error_fatal);
+        for (j = 0; j < 4; j++) {
+            sysbus_connect_irq(sbd, j,
+                               qdev_get_gpio_in(mpic, a1222_dma[i].irq + j));
+        }
+        memory_region_add_subregion(sysbus_mmio_get_region(ccsr, 0),
+                                    a1222_dma[i].offset,
+                                    sysbus_mmio_get_region(sbd, 0));
+    }
+}
+
 static void a1222_init(MachineState *machine)
 {
     if (machine->ram_size > 2 * GiB) {
@@ -151,6 +196,7 @@ static void a1222_init(MachineState *machine)
     ppce500_init(machine);
     a1222_init_sata(machine);
     a1222_init_usb(machine);
+    a1222_init_dma(machine);
 }
 
 static void a1222_machine_class_init(ObjectClass *oc, const void *data)
