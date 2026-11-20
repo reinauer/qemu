@@ -360,7 +360,7 @@ bool ati_host_data_flush(ATIVGAState *s)
     if (!s->host_data.active) {
         return false;
     }
-    if (src_source != DP_SRC_HOST) {
+    if (src_source != DP_SRC_HOST && src_source != DP_SRC_HOST_BYTEALIGN) {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "host_data_blt: unsupported src_source %x\n", src_source);
         return false;
@@ -408,14 +408,28 @@ bool ati_host_data_flush(ATIVGAState *s)
             bswap32s(&fg);
             bswap32s(&bg);
         }
+        /*
+         * Byte aligned host data starts each scanline with a new byte, so
+         * the bits after the end of a scanline up to the next byte are left
+         * out.
+         */
+        bool byte_align = src_source == DP_SRC_HOST_BYTEALIGN;
+
+        col = s->host_data.col;
+        pix_count = 0;
         idx = 0;
-        for (int word = 0; word < 4; word++) {
-            for (int byte = 0; byte < 4; byte++) {
-                uint8_t byte_val = s->host_data.acc[word] >> (byte * 8);
-                for (int i = 0; i < 8; i++) {
-                    bool is_fg = byte_val & BIT(byte_pix_order ? i : 7 - i);
-                    stn_he_p(&pix_buf[idx], bypp, is_fg ? fg : bg);
-                    idx += bypp;
+        for (int bit = 0; bit < ATI_HOST_DATA_ACC_BITS; bit++) {
+            uint8_t byte_val = s->host_data.acc[bit / 32] >> (bit / 8 % 4 * 8);
+            int i = bit % 8;
+            bool is_fg = byte_val & BIT(byte_pix_order ? i : 7 - i);
+
+            stn_he_p(&pix_buf[idx], bypp, is_fg ? fg : bg);
+            idx += bypp;
+            pix_count++;
+            if (++col >= ctx.dst.width) {
+                col = 0;
+                if (byte_align) {
+                    bit |= 7;
                 }
             }
         }
