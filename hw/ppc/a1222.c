@@ -24,6 +24,7 @@
 #include "hw/i2c/bitbang_i2c.h"
 #include "hw/i2c/i2c.h"
 #include "hw/ide/fsl-sata.h"
+#include "hw/rtc/mcp7940.h"
 #include "hw/usb/hcd-ehci.h"
 #include "system/blockdev.h"
 #include "system/system.h"
@@ -71,6 +72,9 @@ static const struct {
  */
 #define A1222_I2C2_OFFSET   0x3100
 #define A1222_I2C_IRQ       43
+
+/* The MCP7940 battery backed clock on the second I2C controller */
+#define A1222_RTC_ADDR      0x6f
 
 /*
  * The GPIO bank at 0xf200, whose pins 20 and 21 (in the bank's big-endian
@@ -163,6 +167,16 @@ static void a1222_fixup_devtree(void *fdt)
         qemu_fdt_setprop_cell(fdt, node, "#size-cells", 0);
         qemu_fdt_setprop(fdt, node, "dfsrr", NULL, 0);
     }
+
+    {
+        g_autofree char *node = g_strdup_printf("%s/i2c@%x/rtc@%x", soc,
+                                                A1222_I2C2_OFFSET,
+                                                A1222_RTC_ADDR);
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop_string(fdt, node, "compatible", "microchip,mcp7940x");
+        qemu_fdt_setprop_cell(fdt, node, "reg", A1222_RTC_ADDR);
+    }
 }
 
 static void a1222_init_sata(MachineState *machine)
@@ -247,7 +261,7 @@ static void a1222_init_display(MachineState *machine)
     qdev_connect_gpio_out(irq_or, 0, qdev_get_gpio_in(mpic, A1222_I2C_IRQ));
     sysbus_connect_irq(i2c1, 0, qdev_get_gpio_in(irq_or, 0));
 
-    /* The second I2C controller, with the DVI transmitter */
+    /* The second I2C controller, with the DVI transmitter and the clock */
     dev = qdev_new("mpc-i2c");
     sbd = SYS_BUS_DEVICE(dev);
     object_property_add_child(OBJECT(machine), "i2c2", OBJECT(dev));
@@ -255,6 +269,8 @@ static void a1222_init_display(MachineState *machine)
     sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(irq_or, 1));
     memory_region_add_subregion(ccsr_space, A1222_I2C2_OFFSET,
                                 sysbus_mmio_get_region(sbd, 0));
+    i2c_slave_create_simple(I2C_BUS(qdev_get_child_bus(dev, "i2c")),
+                            TYPE_MCP7940, A1222_RTC_ADDR);
 
     /*
      * The DVI port's DDC, which software bit-bangs through two GPIO pins,

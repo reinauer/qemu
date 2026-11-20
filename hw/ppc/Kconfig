@@ -190,6 +190,7 @@ config A1222
     select OR_IRQ
     select BITBANG_I2C
     select GPIO_MPC8XXX
+    select MCP7940
 
 config VIRTEX
     bool
