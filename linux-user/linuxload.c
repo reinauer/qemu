@@ -151,6 +151,9 @@ int loader_exec(int fdexec, const char *filename, char **argv, char **envp,
     bprm->envp = envp;
 
     retval = prepare_binprm(bprm);
+    if (retval < 0) {
+        return retval;
+    }
 
     if (retval < 4) {
         return -ENOEXEC;
