@@ -29,6 +29,8 @@
 #include "hw/net/fsl_etsec/etsec.h"
 #include "hw/net/fsl_etsec_mdio.h"
 #include "hw/rtc/mcp7940.h"
+#include "hw/sd/sd.h"
+#include "hw/sd/sdhci.h"
 #include "hw/usb/hcd-ehci.h"
 #include "net/net.h"
 #include "system/blockdev.h"
@@ -459,6 +461,32 @@ static void a1222_init_display(MachineState *machine)
 }
 
 /*
+ * The SD card in the eSDHC that the e500 machine creates, from -drive
+ * if=sd.  AmigaOS's nonvolatile.library reads U-Boot's environment from
+ * it, in U-Boot's format (a big-endian CRC32, then "name=value" strings)
+ * at block 0x3000, 8 KiB long; A1222eth.device opens only when it finds
+ * the MAC address there, as "ethaddr" (and "eth1addr" for unit 1).
+ */
+static void a1222_init_sd(void)
+{
+    DriveInfo *dinfo = drive_get(IF_SD, 0, 0);
+    Object *esdhc;
+    DeviceState *card;
+
+    if (!dinfo) {
+        return;
+    }
+    esdhc = object_resolve_path_type("", TYPE_FSL_ESDHC_BE, NULL);
+    assert(esdhc);
+
+    card = qdev_new(TYPE_SD_CARD);
+    qdev_prop_set_drive_err(card, "drive", blk_by_legacy_dinfo(dinfo),
+                            &error_fatal);
+    qdev_realize_and_unref(card, qdev_get_child_bus(DEVICE(esdhc), "sd-bus"),
+                           &error_fatal);
+}
+
+/*
  * The DMA controllers, which the AmigaOS kernel hands out to its users
  * channel by channel: graphics.library copies its shadow of the DIU's frame
  * buffer through any free channel of either, the audio driver feeds the
@@ -562,6 +590,7 @@ static void a1222_init(MachineState *machine)
     a1222_init_net(machine, etsec, i);
     a1222_init_sata(machine);
     a1222_init_usb(machine);
+    a1222_init_sd();
     a1222_init_display(machine);
     a1222_init_dma(machine);
     a1222_init_audio(machine);
@@ -581,6 +610,11 @@ static void a1222_machine_class_init(ObjectClass *oc, const void *data)
     pmc->platform_bus_first_irq = 5;
     pmc->platform_bus_num_irqs = 10;
     pmc->ccsrbar_base = A1222_CCSR_BASE;
+    /*
+     * The eSDHC, with the SD card where U-Boot keeps its environment on the
+     * A1222, and AmigaOS's nonvolatile.library looks for its variables
+     */
+    pmc->has_esdhc = true;
     /*
      * The PCI controller as the first of the P1022's PCIe controllers, with
      * U-Boot's 36-bit windows for it, which the AmigaOS kernel has built in
