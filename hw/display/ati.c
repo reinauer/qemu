@@ -128,6 +128,14 @@ static void ati_vga_switch_mode(ATIVGAState *s)
                 vbe_ioport_write_data(&s->vga, 0, stride);
             }
             ati_vga_set_offset(&s->vga, offs);
+            /*
+             * The CRTC shows its mode whatever the VGA attribute controller
+             * says, but the VGA code blanks the display unless palette
+             * access is with the display (AR index bit 5), which normally
+             * the video BIOS sets: without one, as on PowerPC machines
+             * whose drivers set the mode, the display stayed blank.
+             */
+            s->vga.ar_index |= 0x20;
         }
     } else {
         /* VGA mode enabled */
