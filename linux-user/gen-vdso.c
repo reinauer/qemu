@@ -12,9 +12,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#ifdef __APPLE__
+#include <machine/endian.h>
+#else
 #include <endian.h>
+#endif
 #include <unistd.h>
+#ifdef __APPLE__
+#include "../include/elf.h"
+#else
 #include "elf.h"
+#endif
 
 
 #define bswap_(p)  _Generic(*(p), \

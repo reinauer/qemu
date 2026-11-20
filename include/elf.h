@@ -1,6 +1,7 @@
 #ifndef QEMU_ELF_H
 #define QEMU_ELF_H
 
+
 /* 32-bit ELF base types. */
 typedef uint32_t Elf32_Addr;
 typedef uint16_t Elf32_Half;
@@ -242,6 +243,7 @@ typedef struct mips_elf_abiflags_v0 {
 #define DT_DEBUG        21
 #define DT_TEXTREL      22
 #define DT_JMPREL       23
+#define DT_BIND_NOW     24
 #define DT_BINDNOW      24
 #define DT_INIT_ARRAY   25
 #define DT_FINI_ARRAY   26
