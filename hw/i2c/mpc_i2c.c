@@ -154,10 +154,11 @@ static void  mpc_i2c_address_send(MPCI2CState *s)
     } else {
         s->address = s->dr;
         s->sr &= ~CSR_RXAK;
-        s->sr |=  CSR_MCF; /* Set after Byte Transfer is completed */
-        s->sr |=  CSR_MIF; /* Set after Byte Transfer is completed */
-        mpc_i2c_irq(s);
     }
+    /* The byte went out, whether or not a device acknowledged it */
+    s->sr |=  CSR_MCF; /* Set after Byte Transfer is completed */
+    s->sr |=  CSR_MIF; /* Set after Byte Transfer is completed */
+    mpc_i2c_irq(s);
 }
 
 static void  mpc_i2c_data_send(MPCI2CState *s)
@@ -168,10 +169,10 @@ static void  mpc_i2c_data_send(MPCI2CState *s)
         i2c_end_transfer(s->bus);
     } else {
         s->sr &= ~CSR_RXAK;
-        s->sr |=  CSR_MCF; /* Set after Byte Transfer is completed */
-        s->sr |=  CSR_MIF; /* Set after Byte Transfer is completed */
-        mpc_i2c_irq(s);
     }
+    s->sr |=  CSR_MCF; /* Set after Byte Transfer is completed */
+    s->sr |=  CSR_MIF; /* Set after Byte Transfer is completed */
+    mpc_i2c_irq(s);
 }
 
 static void  mpc_i2c_data_recive(MPCI2CState *s)
