@@ -127,7 +127,12 @@ static const char *last_log_filename;
 # endif
 #endif
 
+#if defined(__APPLE__) && defined(TARGET_X86_64)
+/* Keep ordinary Linux user pointers in the canonical lower address range. */
+unsigned long reserved_va = (1UL << 40) - 1;
+#else
 unsigned long reserved_va;
+#endif
 unsigned long guest_addr_max;
 
 static void usage(int exitcode);

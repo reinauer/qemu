@@ -19,6 +19,16 @@
 #define MAP_FIXED_NOREPLACE  (MAP_FIXED | MAP_EXCL)
 #endif
 
+static uintptr_t pgb_host_brk(void)
+{
+#ifdef __APPLE__
+    /* Darwin has no useful sbrk heap; the Mach map supplies occupied ranges. */
+    return 0;
+#else
+    return (uintptr_t)sbrk(0);
+#endif
+}
+
 uintptr_t guest_base;
 bool have_guest_base;
 
@@ -175,7 +185,7 @@ static void pgb_fixed(const char *image_name, const PGBRange *image_range,
                       const PGBRange *commpage_range, uintptr_t align)
 {
     PGBAddrs ga;
-    uintptr_t brk = (uintptr_t)sbrk(0);
+    uintptr_t brk = pgb_host_brk();
 
     if (!QEMU_IS_ALIGNED(guest_base, align)) {
         fprintf(stderr, "Requested guest base %p does not satisfy "
@@ -278,7 +288,7 @@ static void pgb_dynamic(const char *image_name, const PGBRange *image_range,
 
     /* Try the identity map first. */
     if (pgb_addr_set(&ga, image_range, commpage_range, true)) {
-        brk = (uintptr_t)sbrk(0);
+        brk = pgb_host_brk();
         if (pgb_try_mmap_set(&ga, 0, brk)) {
             guest_base = 0;
             return;
@@ -294,7 +304,7 @@ static void pgb_dynamic(const char *image_name, const PGBRange *image_range,
     root = read_self_maps();
 
     /* Read brk after we've read the maps, which will malloc. */
-    brk = (uintptr_t)sbrk(0);
+    brk = pgb_host_brk();
 
     if (!root) {
         ret = pgb_find_fallback(&ga, align, brk);
@@ -342,6 +352,20 @@ void probe_guest_base(const char *image_name, const PGBRange *image_range,
                      image_name, image_range->hi, reserved_va);
         exit(EXIT_FAILURE);
     }
+
+#ifdef __APPLE__
+    if (reserved_va && !have_guest_base) {
+        void *space = mmap(NULL, reserved_va + 1, PROT_NONE,
+                           MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+        if (space == MAP_FAILED) {
+            error_report("%s: cannot reserve the guest virtual address window: %s",
+                         image_name, strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+        guest_base = (uintptr_t)space;
+        return;
+    }
+#endif
 
     if (have_guest_base) {
         pgb_fixed(image_name, image_range, commpage_range, align);

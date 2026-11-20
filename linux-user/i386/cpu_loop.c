@@ -284,6 +284,13 @@ void cpu_loop(CPUX86State *env)
             force_sig(TARGET_SIGSEGV);
             break;
         case EXCP0E_PAGE:
+#if defined(__APPLE__) && defined(TARGET_X86_64)
+            if (reserved_va && (env->error_code & PG_ERROR_I_D_MASK) &&
+                (env->eip & TARGET_PAGE_MASK) == TARGET_VSYSCALL_PAGE) {
+                emulate_vsyscall(env);
+                break;
+            }
+#endif
             force_sig_fault(TARGET_SIGSEGV,
                             (env->error_code & PG_ERROR_P_MASK ?
                              TARGET_SEGV_ACCERR : TARGET_SEGV_MAPERR),

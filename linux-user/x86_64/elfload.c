@@ -25,6 +25,14 @@ const char *get_elf_platform(CPUState *cs)
 
 bool init_guest_commpage(void)
 {
+#ifdef __APPLE__
+    /* The high vsyscall page lies outside our reserved user window.
+     * Its instruction-fetch fault is handled in the x86 CPU loop.
+     */
+    if (reserved_va) {
+        return true;
+    }
+#endif
     /*
      * The vsyscall page is at a high negative address aka kernel space,
      * which means that we cannot actually allocate it with target_mmap.
