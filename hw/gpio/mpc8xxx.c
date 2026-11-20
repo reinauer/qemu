@@ -21,6 +21,7 @@
 
 #include "qemu/osdep.h"
 #include "hw/core/irq.h"
+#include "hw/core/qdev-properties.h"
 #include "hw/core/sysbus.h"
 #include "migration/vmstate.h"
 #include "qom/object.h"
@@ -41,11 +42,16 @@ struct MPC8XXXGPIOState {
     uint32_t ier;
     uint32_t imr;
     uint32_t icr;
+
+    /* The levels of the pins, as the gpio inputs last set them */
+    uint32_t in;
+    /* Pins pulled up, so that their output is high when not driven */
+    uint32_t pullups;
 };
 
 static const VMStateDescription vmstate_mpc8xxx_gpio = {
     .name = "mpc8xxx_gpio",
-    .version_id = 1,
+    .version_id = 2,
     .minimum_version_id = 1,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT32(dir, MPC8XXXGPIOState),
@@ -54,6 +60,7 @@ static const VMStateDescription vmstate_mpc8xxx_gpio = {
         VMSTATE_UINT32(ier, MPC8XXXGPIOState),
         VMSTATE_UINT32(imr, MPC8XXXGPIOState),
         VMSTATE_UINT32(icr, MPC8XXXGPIOState),
+        VMSTATE_UINT32_V(in, MPC8XXXGPIOState, 2),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -78,8 +85,8 @@ static uint64_t mpc8xxx_gpio_read(void *opaque, hwaddr offset,
         return s->dir;
     case 0x4: /* Open Drain */
         return s->odr;
-    case 0x8: /* Data */
-        return s->dat;
+    case 0x8: /* Data: what output pins drive, and the level of inputs */
+        return (s->dat & s->dir) | (s->in & ~s->dir);
     case 0xC: /* Interrupt Event */
         return s->ier;
     case 0x10: /* Interrupt Mask */
@@ -91,24 +98,29 @@ static uint64_t mpc8xxx_gpio_read(void *opaque, hwaddr offset,
     }
 }
 
-static void mpc8xxx_write_data(MPC8XXXGPIOState *s, uint32_t new_data)
+/*
+ * Update the outputs for a change of direction or data: an output pin
+ * drives its data bit, an input pin with a pull-up goes high
+ */
+static void mpc8xxx_write_data(MPC8XXXGPIOState *s, uint32_t new_dir,
+                               uint32_t new_data)
 {
-    uint32_t old_data = s->dat;
-    uint32_t diff = old_data ^ new_data;
+    uint32_t old_out = (s->dat & s->dir) | (s->pullups & ~s->dir);
+    uint32_t new_out = (new_data & new_dir) | (s->pullups & ~new_dir);
+    uint32_t driven = new_dir | s->pullups;
+    uint32_t was_driven = s->dir | s->pullups;
     int i;
 
     for (i = 0; i < 32; i++) {
         uint32_t mask = 0x80000000 >> i;
-        if (!(diff & mask)) {
-            continue;
-        }
 
-        if (s->dir & mask) {
-            /* Output */
-            qemu_set_irq(s->out[i], (new_data & mask) != 0);
+        if ((driven & mask) &&
+            (!(was_driven & mask) || ((old_out ^ new_out) & mask))) {
+            qemu_set_irq(s->out[i], (new_out & mask) != 0);
         }
     }
 
+    s->dir = new_dir;
     s->dat = new_data;
 }
 
@@ -124,13 +136,13 @@ static void mpc8xxx_gpio_write(void *opaque, hwaddr offset,
 
     switch (offset) {
     case 0x0: /* Direction */
-        s->dir = value;
+        mpc8xxx_write_data(s, value, s->dat);
         break;
     case 0x4: /* Open Drain */
         s->odr = value;
         break;
     case 0x8: /* Data */
-        mpc8xxx_write_data(s, value);
+        mpc8xxx_write_data(s, s->dir, value);
         break;
     case 0xC: /* Interrupt Event */
         s->ier &= ~value;
@@ -156,6 +168,7 @@ static void mpc8xxx_gpio_reset(DeviceState *dev)
     s->ier = 0;
     s->imr = 0;
     s->icr = 0;
+    s->in = s->pullups;
 }
 
 static void mpc8xxx_gpio_set_irq(void * opaque, int irq, int level)
@@ -164,6 +177,7 @@ static void mpc8xxx_gpio_set_irq(void * opaque, int irq, int level)
     uint32_t mask;
 
     mask = 0x80000000 >> irq;
+    s->in = (s->in & ~mask) | (level ? mask : 0);
     if ((s->dir & mask) == 0) {
         uint32_t old_value = s->dat & mask;
 
@@ -199,11 +213,17 @@ static void mpc8xxx_gpio_initfn(Object *obj)
     qdev_init_gpio_out(dev, s->out, 32);
 }
 
+static const Property mpc8xxx_gpio_properties[] = {
+    /* Pins with a pull-up, as a mask in the layout of the data register */
+    DEFINE_PROP_UINT32("pullups", MPC8XXXGPIOState, pullups, 0),
+};
+
 static void mpc8xxx_gpio_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->vmsd = &vmstate_mpc8xxx_gpio;
+    device_class_set_props(dc, mpc8xxx_gpio_properties);
     device_class_set_legacy_reset(dc, mpc8xxx_gpio_reset);
 }
 
