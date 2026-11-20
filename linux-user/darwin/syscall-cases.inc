@@ -272,6 +272,22 @@ case TARGET_NR_umask: {
     return get_errno(umask(a1));
 }
 #endif
+#ifdef TARGET_NR_sched_yield
+case TARGET_NR_sched_yield: {
+    return get_errno(sched_yield());
+}
+#endif
+#ifdef TARGET_NR_gettid
+case TARGET_NR_gettid: {
+    return ts->ts_tid;
+}
+#endif
+#ifdef TARGET_NR_set_tid_address
+case TARGET_NR_set_tid_address: {
+    ts->child_tidptr = a1;
+    return ts->ts_tid;
+}
+#endif
 #ifdef TARGET_NR_arch_prctl
 case TARGET_NR_arch_prctl: {
 #ifdef TARGET_X86_64
@@ -654,6 +670,16 @@ case TARGET_NR_kill: {
     return get_errno(kill(a1, sig));
 }
 #endif
+#ifdef TARGET_NR_clone
+case TARGET_NR_clone: {
+    return get_errno(do_fork(env, a1, a2, a3, a5, a4));
+}
+#endif
+#ifdef TARGET_NR_futex
+case TARGET_NR_futex: {
+    return guest_futex(a1, a2, a3, a4, a6);
+}
+#endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl: {
     if (a2 == TARGET_TIOCGWINSZ || a2 == TARGET_TIOCSWINSZ) {
@@ -686,5 +712,61 @@ case TARGET_NR_ioctl: {
         return put_user_u32(n, a3);
     }
     return -TARGET_ENOTTY;
+}
+#endif
+#ifdef TARGET_NR_tgkill
+case TARGET_NR_tgkill: {
+    abi_long tid = num == TARGET_NR_tgkill ? a2 : a1;
+    int sig = target_to_host_signal(num == TARGET_NR_tgkill ? a3 : a2);
+    if (sig < 0 || sig >= NSIG) {
+        return -TARGET_EINVAL;
+    }
+    if (num == TARGET_NR_tgkill && a1 != getpid()) {
+        return -TARGET_ESRCH;
+    }
+    ret = -TARGET_ESRCH;
+    pthread_mutex_lock(&clone_lock);
+    cpu_list_lock();
+    CPUState *other;
+    CPU_FOREACH(other)
+    {
+        TaskState *other_ts = get_task_state(other);
+        if (other_ts->ts_tid == tid) {
+            int err = pthread_kill(other_ts->darwin_thread, sig);
+            ret = err ? -host_to_target_errno(err) : 0;
+            break;
+        }
+    }
+    cpu_list_unlock();
+    pthread_mutex_unlock(&clone_lock);
+    return ret;
+}
+#endif
+#ifdef TARGET_NR_tkill
+case TARGET_NR_tkill: {
+    abi_long tid = num == TARGET_NR_tgkill ? a2 : a1;
+    int sig = target_to_host_signal(num == TARGET_NR_tgkill ? a3 : a2);
+    if (sig < 0 || sig >= NSIG) {
+        return -TARGET_EINVAL;
+    }
+    if (num == TARGET_NR_tgkill && a1 != getpid()) {
+        return -TARGET_ESRCH;
+    }
+    ret = -TARGET_ESRCH;
+    pthread_mutex_lock(&clone_lock);
+    cpu_list_lock();
+    CPUState *other;
+    CPU_FOREACH(other)
+    {
+        TaskState *other_ts = get_task_state(other);
+        if (other_ts->ts_tid == tid) {
+            int err = pthread_kill(other_ts->darwin_thread, sig);
+            ret = err ? -host_to_target_errno(err) : 0;
+            break;
+        }
+    }
+    cpu_list_unlock();
+    pthread_mutex_unlock(&clone_lock);
+    return ret;
 }
 #endif

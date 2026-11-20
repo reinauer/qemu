@@ -151,6 +151,18 @@ return "fchdir";
 case TARGET_NR_umask:
 return "umask";
 #endif
+#ifdef TARGET_NR_sched_yield
+case TARGET_NR_sched_yield:
+return "sched_yield";
+#endif
+#ifdef TARGET_NR_gettid
+case TARGET_NR_gettid:
+return "gettid";
+#endif
+#ifdef TARGET_NR_set_tid_address
+case TARGET_NR_set_tid_address:
+return "set_tid_address";
+#endif
 #ifdef TARGET_NR_arch_prctl
 case TARGET_NR_arch_prctl:
 return "arch_prctl";
@@ -271,9 +283,25 @@ return "sigaltstack";
 case TARGET_NR_kill:
 return "kill";
 #endif
+#ifdef TARGET_NR_clone
+case TARGET_NR_clone:
+return "clone";
+#endif
+#ifdef TARGET_NR_futex
+case TARGET_NR_futex:
+return "futex";
+#endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl:
 return "ioctl";
+#endif
+#ifdef TARGET_NR_tgkill
+case TARGET_NR_tgkill:
+return "tgkill";
+#endif
+#ifdef TARGET_NR_tkill
+case TARGET_NR_tkill:
+return "tkill";
 #endif
 
 

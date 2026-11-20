@@ -18,6 +18,11 @@
 #include "exec/mmap-lock.h"
 #include "user/cpu_loop.h"
 #include "user/signal.h"
+#include "qemu/guest-random.h"
+#include "qemu/rcu.h"
+#include "tcg/tcg.h"
+#include "tcg/startup.h"
+#include "thread-abi.h"
 #include "gdbstub/syscalls.h"
 #include <sys/utsname.h>
 #include <sys/ioctl.h>
@@ -699,13 +704,31 @@ static abi_long guest_sigmask(int how, abi_ulong set_addr, abi_ulong old_addr,
     return 0;
 }
 
+#include "futex.c.inc"
 #include "thread.c.inc"
 
 static abi_long guest_exit(CPUArchState *env, int code)
 {
+    CPUState *cpu = env_cpu(env);
     if (block_signals()) {
         return -QEMU_ERESTARTSYS;
     }
+    pthread_mutex_lock(&clone_lock);
+    if (CPU_NEXT(first_cpu)) {
+        TaskState *ts = get_task_state(cpu);
+        if (ts->child_tidptr) {
+            put_user_u32(0, ts->child_tidptr);
+            futex_wake(ts->child_tidptr, INT_MAX, UINT32_MAX);
+        }
+        object_unparent(OBJECT(cpu));
+        object_unref(OBJECT(cpu));
+        pthread_mutex_unlock(&clone_lock);
+        thread_cpu = NULL;
+        g_free(ts);
+        rcu_unregister_thread();
+        pthread_exit(NULL);
+    }
+    pthread_mutex_unlock(&clone_lock);
     preexit_cleanup(env, code);
     _exit(code);
 }
@@ -746,6 +769,7 @@ static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
                               abi_long a2, abi_long a3, abi_long a4,
                               abi_long a5, abi_long a6)
 {
+    TaskState *ts = get_task_state(env_cpu(env));
     void *p;
     abi_long ret;
     switch (num) {
