@@ -1135,3 +1135,14 @@ case TARGET_NR_accept4: {
     return fd;
 }
 #endif
+
+#ifdef TARGET_NR_sendmsg
+case TARGET_NR_sendmsg: {
+    return guest_message(a1, a2, a3, true);
+}
+#endif
+#ifdef TARGET_NR_recvmsg
+case TARGET_NR_recvmsg: {
+    return guest_message(a1, a2, a3, false);
+}
+#endif

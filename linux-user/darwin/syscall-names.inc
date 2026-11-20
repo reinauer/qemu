@@ -444,6 +444,14 @@ case TARGET_NR_accept4:
 return "accept4";
 #endif
 
+#ifdef TARGET_NR_sendmsg
+case TARGET_NR_sendmsg:
+return "sendmsg";
+#endif
+#ifdef TARGET_NR_recvmsg
+case TARGET_NR_recvmsg:
+return "recvmsg";
+#endif
 
 
 
