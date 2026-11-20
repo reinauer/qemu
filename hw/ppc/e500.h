@@ -42,6 +42,8 @@ struct PPCE500MachineClass {
     hwaddr pci_pio_base;
     hwaddr pci_mmio_base;
     hwaddr pci_mmio_bus_base;
+    /* Offset of the PCI controller in CCSR; 0 means the MPC8544's 0x8000 */
+    hwaddr pci_regs_offset;
     hwaddr spin_base;
     uint32_t clock_freq;
     uint32_t bus_freq;

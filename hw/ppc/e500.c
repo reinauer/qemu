@@ -91,6 +91,12 @@ struct boot_info
     uint32_t entry;
 };
 
+static hwaddr e500_pci_regs_offset(PPCE500MachineClass *pmc)
+{
+    return pmc->pci_regs_offset ? pmc->pci_regs_offset
+                                : MPC8544_PCI_REGS_OFFSET;
+}
+
 static uint32_t *pci_map_create(void *fdt, uint32_t mpic, int first_slot,
                                 int nr_slots, int *len)
 {
@@ -616,7 +622,7 @@ static int ppce500_load_device_tree(PPCE500MachineState *pms,
     g_free(msi);
 
     pci = g_strdup_printf("/pci@%llx",
-                          pmc->ccsrbar_base + MPC8544_PCI_REGS_OFFSET);
+                          pmc->ccsrbar_base + e500_pci_regs_offset(pmc));
     qemu_fdt_add_subnode(fdt, pci);
     qemu_fdt_setprop_cell(fdt, pci, "cell-index", 0);
     qemu_fdt_setprop_string(fdt, pci, "compatible", "fsl,mpc8540-pci");
@@ -636,8 +642,9 @@ static int ppce500_load_device_tree(PPCE500MachineState *pms,
     qemu_fdt_setprop_cell(fdt, pci, "fsl,msi", msi_ph);
     qemu_fdt_setprop(fdt, pci, "ranges", pci_ranges, sizeof(pci_ranges));
     qemu_fdt_setprop_cells(fdt, pci, "reg",
-                           (pmc->ccsrbar_base + MPC8544_PCI_REGS_OFFSET) >> 32,
-                           (pmc->ccsrbar_base + MPC8544_PCI_REGS_OFFSET),
+                           (pmc->ccsrbar_base +
+                            e500_pci_regs_offset(pmc)) >> 32,
+                           (pmc->ccsrbar_base + e500_pci_regs_offset(pmc)),
                            0, 0x1000);
     qemu_fdt_setprop_cell(fdt, pci, "clock-frequency", 66666666);
     qemu_fdt_setprop_cell(fdt, pci, "#interrupt-cells", 1);
@@ -1107,7 +1114,7 @@ void ppce500_init(MachineState *machine)
         sysbus_connect_irq(s, i, qdev_get_gpio_in(mpicdev, pci_irq_nrs[i]));
     }
 
-    memory_region_add_subregion(ccsr_addr_space, MPC8544_PCI_REGS_OFFSET,
+    memory_region_add_subregion(ccsr_addr_space, e500_pci_regs_offset(pmc),
                                 sysbus_mmio_get_region(s, 0));
 
     pci_bus = PCI_BUS(qdev_get_child_bus(dev, "pci.0"));
