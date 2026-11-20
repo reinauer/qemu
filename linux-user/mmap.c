@@ -393,9 +393,12 @@ static bool mmap_frag(abi_ulong real_start, abi_ulong start, abi_ulong last,
     host_prot_new = target_to_host_prot(prot_new);
 
     /* Adjust protection to be able to write. */
-    if (!(host_prot_old & PROT_WRITE)) {
-        host_prot_old |= PROT_WRITE;
-        mprotect(host_start, host_page_size, host_prot_old);
+    if ((host_prot_old & (PROT_READ | PROT_WRITE)) !=
+        (PROT_READ | PROT_WRITE)) {
+        host_prot_old |= PROT_READ | PROT_WRITE;
+        if (mprotect(host_start, host_page_size, host_prot_old)) {
+            return false;
+        }
     }
 
     /* Read or zero the new guest pages. */
@@ -407,8 +410,9 @@ static bool mmap_frag(abi_ulong real_start, abi_ulong start, abi_ulong last,
     }
 
     /* Put final protection */
-    if (host_prot_new != host_prot_old) {
-        mprotect(host_start, host_page_size, host_prot_new);
+    if (host_prot_new != host_prot_old &&
+        mprotect(host_start, host_page_size, host_prot_new)) {
+        return false;
     }
     return true;
 }
