@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
+#include "migration/vmstate.h"
 #include "system/runstate.h"
 #include "target/ppc/cpu.h"
 #include "hw/core/sysbus.h"
@@ -44,6 +45,7 @@ REG32(GUTS_PORPLLSR, 0x00)
 #define MPC8544_GUTS_ADDR_GPOUTDR     0x40
 #define MPC8544_GUTS_ADDR_GPINDR      0x50
 #define MPC8544_GUTS_ADDR_PMUXCR      0x60
+#define P1022_GUTS_ADDR_PMUXCR2       0x68
 #define MPC8544_GUTS_ADDR_DEVDISR     0x70
 #define MPC8544_GUTS_ADDR_POWMGTCSR   0x80
 #define MPC8544_GUTS_ADDR_MCPSUMR     0x90
@@ -52,6 +54,7 @@ REG32(GUTS_PORPLLSR, 0x00)
 #define MPC8544_GUTS_ADDR_SVR         0xA4
 #define MPC8544_GUTS_ADDR_RSTCR       0xB0
 #define MPC8544_GUTS_ADDR_IOVSELSR    0xC0
+#define P1022_GUTS_ADDR_CLKDVDR       0x800
 #define MPC8544_GUTS_ADDR_DDRCSR      0xB20
 #define MPC8544_GUTS_ADDR_DDRCDR      0xB24
 #define MPC8544_GUTS_ADDR_DDRCLKDR    0xB28
@@ -69,12 +72,18 @@ struct GutsState {
     /*< public >*/
 
     MemoryRegion iomem;
+
+    /* Pin multiplexing and the P1022's DIU pixel clock divider */
+    uint32_t pmuxcr;
+    uint32_t pmuxcr2;
+    uint32_t clkdvdr;
 };
 
 
 static uint64_t mpc8544_guts_read(void *opaque, hwaddr addr,
                                   unsigned size)
 {
+    GutsState *s = opaque;
     uint32_t value = 0;
     CPUPPCState *env = cpu_env(current_cpu);
 
@@ -92,6 +101,15 @@ static uint64_t mpc8544_guts_read(void *opaque, hwaddr addr,
     case MPC8544_GUTS_ADDR_SVR:
         value = env->spr[SPR_E500_SVR];
         break;
+    case MPC8544_GUTS_ADDR_PMUXCR:
+        value = s->pmuxcr;
+        break;
+    case P1022_GUTS_ADDR_PMUXCR2:
+        value = s->pmuxcr2;
+        break;
+    case P1022_GUTS_ADDR_CLKDVDR:
+        value = s->clkdvdr;
+        break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: Unknown register 0x%" HWADDR_PRIx "\n",
@@ -105,6 +123,8 @@ static uint64_t mpc8544_guts_read(void *opaque, hwaddr addr,
 static void mpc8544_guts_write(void *opaque, hwaddr addr,
                                uint64_t value, unsigned size)
 {
+    GutsState *s = opaque;
+
     addr &= MPC8544_GUTS_MMIO_SIZE - 1;
 
     switch (addr) {
@@ -112,6 +132,15 @@ static void mpc8544_guts_write(void *opaque, hwaddr addr,
         if (value & MPC8544_GUTS_RSTCR_RESET) {
             qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
         }
+        break;
+    case MPC8544_GUTS_ADDR_PMUXCR:
+        s->pmuxcr = value;
+        break;
+    case P1022_GUTS_ADDR_PMUXCR2:
+        s->pmuxcr2 = value;
+        break;
+    case P1022_GUTS_ADDR_CLKDVDR:
+        s->clkdvdr = value;
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR, "%s: Unknown register 0x%" HWADDR_PRIx
@@ -140,12 +169,42 @@ static void mpc8544_guts_initfn(Object *obj)
     sysbus_init_mmio(d, &s->iomem);
 }
 
+static void mpc8544_guts_reset(DeviceState *dev)
+{
+    GutsState *s = MPC8544_GUTS(dev);
+
+    s->pmuxcr = 0;
+    s->pmuxcr2 = 0;
+    s->clkdvdr = 0;
+}
+
+static const VMStateDescription vmstate_mpc8544_guts = {
+    .name = TYPE_MPC8544_GUTS,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT32(pmuxcr, GutsState),
+        VMSTATE_UINT32(pmuxcr2, GutsState),
+        VMSTATE_UINT32(clkdvdr, GutsState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void mpc8544_guts_class_init(ObjectClass *klass, const void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
+    device_class_set_legacy_reset(dc, mpc8544_guts_reset);
+    dc->vmsd = &vmstate_mpc8544_guts;
+}
+
 static const TypeInfo mpc8544_guts_types[] = {
     {
         .name          = TYPE_MPC8544_GUTS,
         .parent        = TYPE_SYS_BUS_DEVICE,
         .instance_size = sizeof(GutsState),
         .instance_init = mpc8544_guts_initfn,
+        .class_init    = mpc8544_guts_class_init,
     },
 };
 
