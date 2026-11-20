@@ -20,7 +20,14 @@
 #include "user/signal.h"
 #include "gdbstub/syscalls.h"
 #include <sys/utsname.h>
+#include <sys/ioctl.h>
+#include <sys/filio.h>
+#include <sys/ttycom.h>
+#include <sys/uio.h>
 #include <sys/mount.h>
+#include <termios.h>
+
+#define TARGET_AT_FDCWD -100
 
 TargetFdTrans **target_fd_trans;
 QemuMutex target_fd_trans_lock;
@@ -219,6 +226,33 @@ abi_long do_arch_prctl(CPUX86State *env, int code, abi_ulong addr)
 }
 #endif
 
+static int host_dirfd(int fd)
+{
+    return fd == TARGET_AT_FDCWD ? AT_FDCWD : fd;
+}
+
+static int host_open_flags(int flags)
+{
+    int host = flags & TARGET_O_ACCMODE;
+#define FLAG(t, h)                                                             \
+    if (flags & TARGET_##t) {                                                  \
+        host |= h;                                                             \
+    }
+    FLAG(O_CREAT, O_CREAT);
+    FLAG(O_EXCL, O_EXCL);
+    FLAG(O_TRUNC, O_TRUNC);
+    FLAG(O_APPEND, O_APPEND);
+    FLAG(O_NONBLOCK, O_NONBLOCK);
+    FLAG(O_NOCTTY, O_NOCTTY);
+    FLAG(O_CLOEXEC, O_CLOEXEC);
+    FLAG(O_DIRECTORY, O_DIRECTORY);
+    FLAG(O_NOFOLLOW, O_NOFOLLOW);
+    FLAG(O_SYNC, O_SYNC);
+    FLAG(O_DSYNC, O_DSYNC);
+#undef FLAG
+    return host;
+}
+
 static bool is_self_proc_entry(const char *name, const char *entry)
 {
     char by_pid[64];
@@ -273,6 +307,135 @@ ssize_t do_guest_readlink(const char *name, char *buf, size_t size)
     return readlink(path(name), buf, size);
 }
 
+static abi_long guest_open(CPUArchState *env, int fd, abi_ulong addr, int flags,
+                           mode_t mode)
+{
+    char *name = lock_user_string(addr);
+    int ret;
+    if (!name) {
+        return -TARGET_EFAULT;
+    }
+    if ((flags & TARGET_O_PATH) ||
+        (flags & TARGET_O_TMPFILE) == TARGET_O_TMPFILE) {
+        unlock_user(name, addr, 0);
+        return -TARGET_EOPNOTSUPP;
+    }
+    ret = get_errno(do_guest_openat(env, host_dirfd(fd), name,
+                                    host_open_flags(flags), mode, false));
+    unlock_user(name, addr, 0);
+    return ret;
+}
+
+static abi_long guest_io(int fd, abi_ulong addr, abi_ulong count, bool writing,
+                         bool positioned, off_t offset)
+{
+    void *buf;
+    abi_long ret;
+    if (count > SSIZE_MAX) {
+        return -TARGET_EINVAL;
+    }
+    if (!count) {
+        return 0;
+    }
+    count = MIN(count, 16 * 1024 * 1024);
+    buf = lock_user(writing ? VERIFY_READ : VERIFY_WRITE, addr, count, writing);
+    if (!buf) {
+        return -TARGET_EFAULT;
+    }
+    /* Keep Darwin's kernel from faulting a same-file mmap during I/O. */
+    g_autofree void *bounce = g_try_malloc(count);
+    if (!bounce) {
+        unlock_user(buf, addr, 0);
+        return -TARGET_ENOMEM;
+    }
+    if (writing) {
+        memcpy(bounce, buf, count);
+    }
+    if (positioned) {
+        ret = get_errno(writing ? pwrite(fd, bounce, count, offset)
+                                : pread(fd, bounce, count, offset));
+    } else {
+        ret = get_errno(writing ? write(fd, bounce, count)
+                                : read(fd, bounce, count));
+    }
+    if (!writing && ret > 0) {
+        memcpy(buf, bounce, ret);
+    }
+    unlock_user(buf, addr, !writing && ret > 0 ? ret : 0);
+    return ret;
+}
+
+static abi_long guest_iov(int fd, abi_ulong addr, int count, bool writing)
+{
+    struct target_iovec *target;
+    struct iovec *host;
+    void **guest;
+    size_t total = 0;
+    g_autofree char *bounce = NULL;
+    abi_long ret = -TARGET_EFAULT;
+    if (count < 0 || count > IOV_MAX) {
+        return -TARGET_EINVAL;
+    }
+    if (!count) {
+        return 0;
+    }
+    target = lock_user(VERIFY_READ, addr, count * sizeof(*target), 1);
+    if (!target) {
+        return -TARGET_EFAULT;
+    }
+    host = g_new0(struct iovec, count);
+    guest = g_new0(void *, count);
+    for (int i = 0; i < count; i++) {
+        size_t len = tswapal(target[i].iov_len);
+        if (len > SSIZE_MAX || total > SSIZE_MAX - len) {
+            ret = -TARGET_EINVAL;
+            goto done;
+        }
+        total += len;
+    }
+    total = MIN(total, 16 * 1024 * 1024);
+    bounce = g_try_malloc(total ?: 1);
+    if (!bounce) {
+        ret = -TARGET_ENOMEM;
+        goto done;
+    }
+    size_t offset = 0;
+    for (int i = 0; i < count; i++) {
+        abi_ulong base = tswapal(target[i].iov_base);
+        size_t len = MIN(tswapal(target[i].iov_len), total - offset);
+        host[i].iov_len = len;
+        host[i].iov_base = bounce + offset;
+        if (len) {
+            guest[i] = lock_user(writing ? VERIFY_READ : VERIFY_WRITE, base,
+                                 len, writing);
+            if (!guest[i]) {
+                goto done;
+            }
+            if (writing) {
+                memcpy(host[i].iov_base, guest[i], len);
+            }
+        }
+        offset += len;
+    }
+    ret = get_errno(writing ? writev(fd, host, count) : readv(fd, host, count));
+done:;
+    size_t remaining = !writing && ret > 0 ? ret : 0;
+    for (int i = 0; i < count; i++) {
+        if (guest[i]) {
+            size_t copied = MIN(remaining, host[i].iov_len);
+            if (copied) {
+                memcpy(guest[i], host[i].iov_base, copied);
+            }
+            unlock_user(guest[i], tswapal(target[i].iov_base), copied);
+            remaining -= copied;
+        }
+    }
+    g_free(guest);
+    g_free(host);
+    unlock_user(target, addr, 0);
+    return ret;
+}
+
 #include "thread.c.inc"
 
 static abi_long guest_exit(CPUArchState *env, int code)
@@ -284,10 +447,43 @@ static abi_long guest_exit(CPUArchState *env, int code)
     _exit(code);
 }
 
+static abi_long guest_fcntl(int fd, int cmd, abi_long arg)
+{
+    switch (cmd) {
+    case TARGET_F_DUPFD:
+        return get_errno(fcntl(fd, F_DUPFD, arg));
+    case TARGET_F_DUPFD_CLOEXEC:
+        return get_errno(fcntl(fd, F_DUPFD_CLOEXEC, arg));
+    case TARGET_F_GETFD:
+        return get_errno(fcntl(fd, F_GETFD));
+    case TARGET_F_SETFD:
+        return get_errno(fcntl(fd, F_SETFD, arg));
+    case TARGET_F_GETFL: {
+        int flags = fcntl(fd, F_GETFL), out;
+        if (flags < 0) {
+            return get_errno(-1);
+        }
+        out = flags & O_ACCMODE;
+        if (flags & O_APPEND) {
+            out |= TARGET_O_APPEND;
+        }
+        if (flags & O_NONBLOCK) {
+            out |= TARGET_O_NONBLOCK;
+        }
+        return out;
+    }
+    case TARGET_F_SETFL:
+        return get_errno(fcntl(fd, F_SETFL, host_open_flags(arg)));
+    default:
+        return -TARGET_EINVAL;
+    }
+}
+
 static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
                               abi_long a2, abi_long a3, abi_long a4,
                               abi_long a5, abi_long a6)
 {
+    abi_long ret;
     switch (num) {
 #include "syscall-cases.inc"
     default:
