@@ -3,9 +3,14 @@ if not have_linux_user
 endif
 
 if host_os == 'darwin'
-  if host_arch != 'aarch64' or target_dirs != ['x86_64-linux-user']
-    error('Experimental Darwin linux-user requires an ARM64 host and x86_64-linux-user only')
+  if host_arch != 'aarch64'
+    error('Experimental Darwin linux-user requires an ARM64 host and x86 Linux targets')
   endif
+  foreach target : target_dirs
+    if target not in ['x86_64-linux-user', 'i386-linux-user']
+      error('Unsupported Darwin linux-user target: ' + target)
+    endif
+  endforeach
 endif
 
 linux_user_ss = ss.source_set()

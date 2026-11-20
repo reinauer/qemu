@@ -238,6 +238,8 @@ abi_long do_brk(abi_ulong value)
     return target_brk = value;
 }
 
+#include "i386.c.inc"
+
 #ifdef TARGET_X86_64
 abi_long do_arch_prctl(CPUX86State *env, int code, abi_ulong addr)
 {
@@ -364,7 +366,7 @@ static abi_long guest_io(int fd, abi_ulong addr, abi_ulong count, bool writing,
 {
     void *buf;
     abi_long ret;
-    if (count > SSIZE_MAX) {
+    if (count > ((abi_ulong)-1 >> 1)) {
         return -TARGET_EINVAL;
     }
     if (!count) {
@@ -433,7 +435,7 @@ static uint64_t guest_device(dev_t device)
 }
 
 static abi_long guest_stat(int fd, abi_ulong name_addr, abi_ulong out,
-                           int flags)
+                          int flags, bool wide)
 {
     struct stat st;
     struct target_stat dst = {0};
@@ -441,12 +443,51 @@ static abi_long guest_stat(int fd, abi_ulong name_addr, abi_ulong out,
     if (ret < 0) {
         return ret;
     }
+#ifdef TARGET_ABI32
+    if (wide) {
+        struct target_stat64 dst64 = {0};
+        stq_p(&dst64.st_dev, tswap64(guest_device(st.st_dev)));
+        dst64.st_ino = tswap64(st.st_ino);
+        dst64.__st_ino = tswap32(st.st_ino);
+        dst64.st_nlink = tswap32(st.st_nlink);
+        dst64.st_mode = tswap32(st.st_mode);
+        dst64.st_uid = tswap32(st.st_uid);
+        dst64.st_gid = tswap32(st.st_gid);
+        stq_p(&dst64.st_rdev, tswap64(guest_device(st.st_rdev)));
+        dst64.st_size = tswap64(st.st_size);
+        dst64.st_blksize = tswap32(st.st_blksize);
+        stq_p(&dst64.st_blocks, tswap64(st.st_blocks));
+        dst64.target_st_atime = tswap32(st.st_atimespec.tv_sec);
+        dst64.target_st_atime_nsec = tswap32(st.st_atimespec.tv_nsec);
+        dst64.target_st_mtime = tswap32(st.st_mtimespec.tv_sec);
+        dst64.target_st_mtime_nsec = tswap32(st.st_mtimespec.tv_nsec);
+        dst64.target_st_ctime = tswap32(st.st_ctimespec.tv_sec);
+        dst64.target_st_ctime_nsec = tswap32(st.st_ctimespec.tv_nsec);
+        return copy_to_user(out, &dst64, sizeof(dst64)) ? -TARGET_EFAULT : 0;
+    }
+    if (st.st_ino > UINT32_MAX || st.st_size > INT32_MAX ||
+        st.st_uid > UINT16_MAX || st.st_gid > UINT16_MAX ||
+        st.st_nlink > UINT16_MAX) {
+        return -TARGET_EOVERFLOW;
+    }
+    dst.st_nlink = tswap16(st.st_nlink);
+    dst.st_mode = tswap16(st.st_mode);
+    dst.st_uid = tswap16(st.st_uid);
+    dst.st_gid = tswap16(st.st_gid);
+    if (major(st.st_dev) > 0xff || minor(st.st_dev) > 0xff ||
+        major(st.st_rdev) > 0xff || minor(st.st_rdev) > 0xff) {
+        return -TARGET_EOVERFLOW;
+    }
+    dst.st_dev = tswap16((major(st.st_dev) << 8) | minor(st.st_dev));
+    dst.st_rdev = tswap16((major(st.st_rdev) << 8) | minor(st.st_rdev));
+#else
     dst.st_nlink = tswapal(st.st_nlink);
     dst.st_mode = tswap32(st.st_mode);
     dst.st_uid = tswap32(st.st_uid);
     dst.st_gid = tswap32(st.st_gid);
     dst.st_dev = tswapal(guest_device(st.st_dev));
     dst.st_rdev = tswapal(guest_device(st.st_rdev));
+#endif
     dst.st_ino = tswapal(st.st_ino);
     dst.st_size = tswapal(st.st_size);
     dst.st_blksize = tswapal(st.st_blksize);
@@ -655,6 +696,28 @@ static abi_long get_timespec(struct timespec *ts, abi_ulong addr)
     return 0;
 }
 
+static abi_long get_timespec64(struct timespec *ts, abi_ulong addr)
+{
+    uint64_t values[2];
+    if (copy_from_user(values, addr, sizeof(values))) {
+        return -TARGET_EFAULT;
+    }
+    ts->tv_sec = (int64_t)tswap64(values[0]);
+    ts->tv_nsec = (int64_t)tswap64(values[1]);
+    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000) {
+        return -TARGET_EINVAL;
+    }
+    return 0;
+}
+
+#ifdef TARGET_ABI32
+static abi_long put_timespec64(abi_ulong addr, const struct timespec *ts)
+{
+    uint64_t values[2] = {tswap64(ts->tv_sec), tswap64(ts->tv_nsec)};
+    return copy_to_user(addr, values, sizeof(values)) ? -TARGET_EFAULT : 0;
+}
+#endif
+
 static abi_long guest_sigaction(int sig, abi_ulong act_addr, abi_ulong old_addr,
                                 size_t size)
 {
@@ -734,6 +797,8 @@ static abi_long guest_exec(abi_ulong name_addr, abi_ulong argv_addr,
     char self[PATH_MAX];
     uint32_t self_size = sizeof(self);
     unsigned char magic[256];
+    g_autofree char *selected_binary = NULL;
+    g_autofree char *selected_runtime = NULL;
     int fd, ret;
     if (!name) {
         return -TARGET_EFAULT;
@@ -827,7 +892,39 @@ static abi_long guest_exec(abi_ulong name_addr, abi_ulong argv_addr,
         if (_NSGetExecutablePath(self, &self_size)) {
             return -TARGET_ENAMETOOLONG;
         }
-        /* Preserve argv[0] while recursively entering the same guest ABI. */
+        if (ret < 20) {
+            return -TARGET_ENOEXEC;
+        }
+        bool guest32 = magic[EI_CLASS] == ELFCLASS32;
+        if (magic[EI_DATA] != ELFDATA2LSB ||
+            (guest32 ? lduw_le_p(magic + 18) != EM_386
+                     : magic[EI_CLASS] != ELFCLASS64 ||
+                       lduw_le_p(magic + 18) != EM_X86_64)) {
+            return -TARGET_ENOEXEC;
+        }
+        selected_binary = g_strdup(self);
+        selected_runtime = g_strdup(interp_prefix);
+        if (guest32 != (sizeof(abi_ulong) == 4)) {
+            char resolved[PATH_MAX];
+            if (!realpath(self, resolved)) {
+                return get_errno(-1);
+            }
+            g_autofree char *directory = g_path_get_dirname(resolved);
+            g_free(selected_binary);
+            selected_binary = g_build_filename(directory,
+                guest32 ? "qemu-i386" : "qemu-x86_64", NULL);
+            const char *key = guest32 ? "QEMU_LD_PREFIX_I386="
+                                      : "QEMU_LD_PREFIX_X86_64=";
+            for (unsigned i = 0; i + 1 < envs->len; i++) {
+                const char *entry = envs->pdata[i];
+                if (g_str_has_prefix(entry, key)) {
+                    g_free(selected_runtime);
+                    selected_runtime = g_strdup(entry + strlen(key));
+                    break;
+                }
+            }
+        }
+        /* Preserve argv[0] while entering the child's selected guest ABI. */
         char *argv0 =
             args->len ? g_strdup(args->pdata[0]) : g_strdup(executable);
         if (args->len) {
@@ -839,11 +936,11 @@ static abi_long guest_exec(abi_ulong name_addr, abi_ulong argv_addr,
         if (qemu_loglevel_mask(LOG_STRACE)) {
             g_ptr_array_insert(args, 0, g_strdup("-strace"));
         }
-        g_ptr_array_insert(args, 0, g_strdup(interp_prefix));
+        g_ptr_array_insert(args, 0, g_strdup(selected_runtime));
         g_ptr_array_insert(args, 0, g_strdup("-L"));
-        g_ptr_array_insert(args, 0, g_strdup(self));
+        g_ptr_array_insert(args, 0, g_strdup(selected_binary));
         g_ptr_array_add(args, NULL);
-        execve(self, (char **)args->pdata, (char **)envs->pdata);
+        execve(selected_binary, (char **)args->pdata, (char **)envs->pdata);
     } else {
         g_ptr_array_add(args, NULL);
         execve(executable, (char **)args->pdata, (char **)envs->pdata);
@@ -944,7 +1041,7 @@ static abi_long guest_poll(abi_ulong addr, unsigned count, int timeout)
 }
 
 static abi_long guest_rlimit(int resource, abi_ulong new_addr,
-                             abi_ulong old_addr)
+                            abi_ulong old_addr, bool wide, bool old)
 {
     static const int map[] = {
         RLIMIT_CPU, RLIMIT_FSIZE, RLIMIT_DATA,   RLIMIT_STACK,   RLIMIT_CORE,
@@ -958,6 +1055,18 @@ static abi_long guest_rlimit(int resource, abi_ulong new_addr,
         return get_errno(-1);
     }
     if (old_addr) {
+        if (!wide) {
+            abi_ulong maximum = (abi_ulong)-1;
+            if (old && sizeof(abi_ulong) == 4) {
+                maximum >>= 1;
+            }
+            abi_ulong small[2] = {
+                tswapal(MIN(limit.rlim_cur, (rlim_t)maximum)),
+                tswapal(MIN(limit.rlim_max, (rlim_t)maximum)),
+            };
+            return copy_to_user(old_addr, small, sizeof(small))
+                ? -TARGET_EFAULT : 0;
+        }
         target[0] = tswap64(limit.rlim_cur == RLIM_INFINITY ? UINT64_MAX
                                                             : limit.rlim_cur);
         target[1] = tswap64(limit.rlim_max == RLIM_INFINITY ? UINT64_MAX
@@ -1027,6 +1136,7 @@ static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
     void *p;
     abi_long ret;
     switch (num) {
+#include "i386-cases.inc"
 #include "syscall-cases.inc"
     default:
         qemu_log_mask(LOG_UNIMP, "Unsupported Linux syscall %d on Darwin\n",

@@ -450,6 +450,98 @@ return "accept4";
 
 
 
+#ifdef TARGET_NR_clock_gettime64
+case TARGET_NR_clock_gettime64:
+return "clock_gettime64";
+#endif
+#ifdef TARGET_NR_clock_getres_time64
+case TARGET_NR_clock_getres_time64:
+return "clock_getres_time64";
+#endif
+#ifdef TARGET_NR_clock_nanosleep_time64
+case TARGET_NR_clock_nanosleep_time64:
+return "clock_nanosleep_time64";
+#endif
+#ifdef TARGET_NR_futex_time64
+case TARGET_NR_futex_time64:
+return "futex_time64";
+#endif
+#ifdef TARGET_NR_set_thread_area
+case TARGET_NR_set_thread_area:
+return "set_thread_area";
+#endif
+#ifdef TARGET_NR_get_thread_area
+case TARGET_NR_get_thread_area:
+return "get_thread_area";
+#endif
+#ifdef TARGET_NR_sigreturn
+case TARGET_NR_sigreturn:
+return "sigreturn";
+#endif
+#ifdef TARGET_NR_getuid32
+case TARGET_NR_getuid32:
+return "getuid32";
+#endif
+#ifdef TARGET_NR_geteuid32
+case TARGET_NR_geteuid32:
+return "geteuid32";
+#endif
+#ifdef TARGET_NR_getgid32
+case TARGET_NR_getgid32:
+return "getgid32";
+#endif
+#ifdef TARGET_NR_getegid32
+case TARGET_NR_getegid32:
+return "getegid32";
+#endif
+#ifdef TARGET_NR_fchown32
+case TARGET_NR_fchown32:
+return "fchown32";
+#endif
+#ifdef TARGET_NR_fcntl64
+case TARGET_NR_fcntl64:
+return "fcntl64";
+#endif
+#ifdef TARGET_NR_ugetrlimit
+case TARGET_NR_ugetrlimit:
+return "ugetrlimit";
+#endif
+#ifdef TARGET_NR_stat64
+case TARGET_NR_stat64:
+return "stat64";
+#endif
+#ifdef TARGET_NR_lstat64
+case TARGET_NR_lstat64:
+return "lstat64";
+#endif
+#ifdef TARGET_NR_fstat64
+case TARGET_NR_fstat64:
+return "fstat64";
+#endif
+#ifdef TARGET_NR__llseek
+case TARGET_NR__llseek:
+return "_llseek";
+#endif
+#ifdef TARGET_NR_ftruncate64
+case TARGET_NR_ftruncate64:
+return "ftruncate64";
+#endif
+#ifdef TARGET_NR_truncate64
+case TARGET_NR_truncate64:
+return "truncate64";
+#endif
+#ifdef TARGET_NR_mmap2
+case TARGET_NR_mmap2:
+return "mmap2";
+#endif
+#ifdef TARGET_NR_waitpid
+case TARGET_NR_waitpid:
+return "waitpid";
+#endif
+#ifdef TARGET_NR_socketcall
+case TARGET_NR_socketcall:
+return "socketcall";
+#endif
 #ifdef TARGET_NR_statx
 case TARGET_NR_statx:
 return "statx";

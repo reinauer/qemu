@@ -32,7 +32,7 @@ static int futex_wake(abi_ulong addr, unsigned count, uint32_t mask)
 }
 
 static abi_long guest_futex(abi_ulong addr, int op, uint32_t val,
-                            abi_ulong timeout_addr, uint32_t mask)
+                            abi_ulong timeout_addr, uint32_t mask, bool wide)
 {
     int command = op & 0x7f;
     struct timespec deadline = {0}, rel, now;
@@ -59,7 +59,8 @@ static abi_long guest_futex(abi_ulong addr, int op, uint32_t val,
         return -TARGET_ENOSYS;
     }
     if (timed) {
-        ret = get_timespec(&deadline, timeout_addr);
+        ret = wide ? get_timespec64(&deadline, timeout_addr)
+                   : get_timespec(&deadline, timeout_addr);
         if (ret) {
             return ret;
         }

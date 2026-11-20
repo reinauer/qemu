@@ -128,7 +128,7 @@ static abi_long guest_sendrecv(int fd, abi_ulong addr, abi_ulong len, int flags,
     if (native_flags < 0) {
         return get_errno(-1);
     }
-    if (len > SSIZE_MAX) {
+    if (len > ((abi_ulong)-1 >> 1)) {
         return -TARGET_EINVAL;
     }
     len = MIN(len, 16 * 1024 * 1024);

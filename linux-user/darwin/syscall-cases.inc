@@ -26,12 +26,22 @@ case TARGET_NR_write: {
 #endif
 #ifdef TARGET_NR_pread64
 case TARGET_NR_pread64: {
+#ifdef TARGET_ABI32
+    return guest_io(a1, a2, a3, false, true,
+                    (uint64_t)(uint32_t)a4 | ((uint64_t)(uint32_t)a5 << 32));
+#else
     return guest_io(a1, a2, a3, false, true, a4);
+#endif
 }
 #endif
 #ifdef TARGET_NR_pwrite64
 case TARGET_NR_pwrite64: {
+#ifdef TARGET_ABI32
+    return guest_io(a1, a2, a3, true, true,
+                    (uint64_t)(uint32_t)a4 | ((uint64_t)(uint32_t)a5 << 32));
+#else
     return guest_io(a1, a2, a3, true, true, a4);
+#endif
 }
 #endif
 #ifdef TARGET_NR_readv
@@ -145,27 +155,27 @@ case TARGET_NR_pipe2: {
 #endif
 #ifdef TARGET_NR_fstat
 case TARGET_NR_fstat: {
-    return guest_stat(a1, 0, a2, -1);
+    return guest_stat(a1, 0, a2, -1, false);
 }
 #endif
 #ifdef TARGET_NR_newfstatat
 case TARGET_NR_newfstatat: {
-    return guest_stat(a1, a2, a3, a4);
+    return guest_stat(a1, a2, a3, a4, sizeof(abi_ulong) == 4);
 }
 #endif
 #ifdef TARGET_NR_fstatat64
 case TARGET_NR_fstatat64: {
-    return guest_stat(a1, a2, a3, a4);
+    return guest_stat(a1, a2, a3, a4, sizeof(abi_ulong) == 4);
 }
 #endif
 #ifdef TARGET_NR_stat
 case TARGET_NR_stat: {
-    return guest_stat(TARGET_AT_FDCWD, a1, a2, 0);
+    return guest_stat(TARGET_AT_FDCWD, a1, a2, 0, false);
 }
 #endif
 #ifdef TARGET_NR_lstat
 case TARGET_NR_lstat: {
-    return guest_stat(TARGET_AT_FDCWD, a1, a2, TARGET_AT_SYMLINK_NOFOLLOW);
+    return guest_stat(TARGET_AT_FDCWD, a1, a2, TARGET_AT_SYMLINK_NOFOLLOW, false);
 }
 #endif
 #ifdef TARGET_NR_getdents64
@@ -180,6 +190,18 @@ case TARGET_NR_brk: {
 #endif
 #ifdef TARGET_NR_mmap
 case TARGET_NR_mmap: {
+#ifdef TARGET_ABI32
+    abi_ulong args[6];
+    if (copy_from_user(args, a1, sizeof(args))) {
+        return -TARGET_EFAULT;
+    }
+    a1 = tswapal(args[0]);
+    a2 = tswapal(args[1]);
+    a3 = tswapal(args[2]);
+    a4 = tswapal(args[3]);
+    a5 = tswapal(args[4]);
+    a6 = tswapal(args[5]);
+#endif
     int flags = 0;
     if (a4 & TARGET_MAP_SHARED) {
         flags |= MAP_SHARED;
@@ -684,7 +706,7 @@ case TARGET_NR_getrandom: {
     if (a3 & ~3) {
         return -TARGET_EINVAL;
     }
-    if (a2 < 0 || a2 > SSIZE_MAX) {
+    if (a2 < 0) {
         return -TARGET_EINVAL;
     }
     p = lock_user(VERIFY_WRITE, a1, a2, 0);
@@ -737,7 +759,11 @@ case TARGET_NR_vfork: {
 #endif
 #ifdef TARGET_NR_clone
 case TARGET_NR_clone: {
+#ifdef TARGET_CLONE_BACKWARDS
+    return get_errno(do_fork(env, a1, a2, a3, a4, a5));
+#else
     return get_errno(do_fork(env, a1, a2, a3, a5, a4));
+#endif
 }
 #endif
 #ifdef TARGET_NR_execve
@@ -778,7 +804,7 @@ case TARGET_NR_wait4: {
 #endif
 #ifdef TARGET_NR_futex
 case TARGET_NR_futex: {
-    return guest_futex(a1, a2, a3, a4, a6);
+    return guest_futex(a1, a2, a3, a4, a6, false);
 }
 #endif
 #ifdef TARGET_NR_ioctl
@@ -897,7 +923,7 @@ case TARGET_NR_tkill: {
 #endif
 #ifdef TARGET_NR_getrlimit
 case TARGET_NR_getrlimit: {
-    return guest_rlimit(a1, 0, a2);
+    return guest_rlimit(a1, 0, a2, false, true);
 }
 #endif
 #ifdef TARGET_NR_prlimit64
@@ -905,7 +931,7 @@ case TARGET_NR_prlimit64: {
     if (a1 && a1 != getpid()) {
         return -TARGET_ESRCH;
     }
-    return guest_rlimit(a2, a3, a4);
+    return guest_rlimit(a2, a3, a4, true, false);
 }
 #endif
 #ifdef TARGET_NR_prctl
