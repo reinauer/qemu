@@ -34,6 +34,10 @@
 #include <sys/uio.h>
 #include <sys/mount.h>
 #include <dirent.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <termios.h>
 
 #define TARGET_AT_FDCWD -100
@@ -908,6 +912,37 @@ static abi_long guest_fcntl(int fd, int cmd, abi_long arg)
     }
 }
 
+static abi_long guest_poll(abi_ulong addr, unsigned count, int timeout)
+{
+    struct target_pollfd {
+        int32_t fd;
+        int16_t events, revents;
+    } *target;
+    struct pollfd *host;
+    abi_long ret;
+    if (count > 65536) {
+        return -TARGET_EINVAL;
+    }
+    target = lock_user(VERIFY_WRITE, addr, count * sizeof(*target), 1);
+    if (!target && count) {
+        return -TARGET_EFAULT;
+    }
+    host = g_new0(struct pollfd, count);
+    for (unsigned i = 0; i < count; i++) {
+        host[i].fd = (int32_t)tswap32(target[i].fd);
+        host[i].events = tswap16(target[i].events) & 0x3f;
+    }
+    ret = get_errno(poll(host, count, timeout));
+    if (ret >= 0) {
+        for (unsigned i = 0; i < count; i++) {
+            target[i].revents = tswap16(host[i].revents);
+        }
+    }
+    g_free(host);
+    unlock_user(target, addr, ret >= 0 ? count * sizeof(*target) : 0);
+    return ret;
+}
+
 static abi_long guest_rlimit(int resource, abi_ulong new_addr,
                              abi_ulong old_addr)
 {
@@ -981,6 +1016,8 @@ static abi_long guest_rusage(int who, abi_ulong addr)
 #undef COPY_RUSAGE
     return copy_to_user(addr, &out, sizeof(out)) ? -TARGET_EFAULT : 0;
 }
+
+#include "socket.c.inc"
 
 static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
                               abi_long a2, abi_long a3, abi_long a4,

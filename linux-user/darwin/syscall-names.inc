@@ -355,6 +355,14 @@ return "futex";
 case TARGET_NR_ioctl:
 return "ioctl";
 #endif
+#ifdef TARGET_NR_poll
+case TARGET_NR_poll:
+return "poll";
+#endif
+#ifdef TARGET_NR_ppoll
+case TARGET_NR_ppoll:
+return "ppoll";
+#endif
 #ifdef TARGET_NR_tgkill
 case TARGET_NR_tgkill:
 return "tgkill";
@@ -378,6 +386,62 @@ return "prctl";
 #ifdef TARGET_NR_getrusage
 case TARGET_NR_getrusage:
 return "getrusage";
+#endif
+#ifdef TARGET_NR_socket
+case TARGET_NR_socket:
+return "socket";
+#endif
+#ifdef TARGET_NR_socketpair
+case TARGET_NR_socketpair:
+return "socketpair";
+#endif
+#ifdef TARGET_NR_listen
+case TARGET_NR_listen:
+return "listen";
+#endif
+#ifdef TARGET_NR_shutdown
+case TARGET_NR_shutdown:
+return "shutdown";
+#endif
+#ifdef TARGET_NR_sendto
+case TARGET_NR_sendto:
+return "sendto";
+#endif
+#ifdef TARGET_NR_recvfrom
+case TARGET_NR_recvfrom:
+return "recvfrom";
+#endif
+#ifdef TARGET_NR_setsockopt
+case TARGET_NR_setsockopt:
+return "setsockopt";
+#endif
+#ifdef TARGET_NR_getsockopt
+case TARGET_NR_getsockopt:
+return "getsockopt";
+#endif
+#ifdef TARGET_NR_bind
+case TARGET_NR_bind:
+return "bind";
+#endif
+#ifdef TARGET_NR_connect
+case TARGET_NR_connect:
+return "connect";
+#endif
+#ifdef TARGET_NR_getsockname
+case TARGET_NR_getsockname:
+return "getsockname";
+#endif
+#ifdef TARGET_NR_getpeername
+case TARGET_NR_getpeername:
+return "getpeername";
+#endif
+#ifdef TARGET_NR_accept
+case TARGET_NR_accept:
+return "accept";
+#endif
+#ifdef TARGET_NR_accept4
+case TARGET_NR_accept4:
+return "accept4";
 #endif
 
 

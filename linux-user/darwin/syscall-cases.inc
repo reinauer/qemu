@@ -815,6 +815,30 @@ case TARGET_NR_ioctl: {
     return -TARGET_ENOTTY;
 }
 #endif
+#ifdef TARGET_NR_poll
+case TARGET_NR_poll: {
+    return guest_poll(a1, a2, a3);
+}
+#endif
+#ifdef TARGET_NR_ppoll
+case TARGET_NR_ppoll: {
+    struct timespec timeout;
+    int ms = -1;
+    if (a3) {
+        ret = get_timespec(&timeout, a3);
+        if (ret) {
+            return ret;
+        }
+        ms = MIN((uint64_t)timeout.tv_sec * 1000 +
+                     (timeout.tv_nsec + 999999) / 1000000,
+                 INT_MAX);
+    }
+    if (a4) {
+        return -TARGET_ENOSYS;
+    }
+    return guest_poll(a1, a2, ms);
+}
+#endif
 #ifdef TARGET_NR_tgkill
 case TARGET_NR_tgkill: {
     abi_long tid = num == TARGET_NR_tgkill ? a2 : a1;
@@ -905,5 +929,157 @@ case TARGET_NR_prctl: {
 #ifdef TARGET_NR_getrusage
 case TARGET_NR_getrusage: {
     return guest_rusage(a1, a2);
+}
+#endif
+#ifdef TARGET_NR_socket
+case TARGET_NR_socket: {
+    int family = host_socket_family(a1), type = host_socket_type(a2);
+    if (family < 0 || type < 0) {
+        return get_errno(-1);
+    }
+    int fd = socket(family, type, a3);
+    if (fd >= 0) {
+        socket_flags(fd, a2);
+    }
+    return get_errno(fd);
+}
+#endif
+#ifdef TARGET_NR_socketpair
+case TARGET_NR_socketpair: {
+    int family = host_socket_family(a1), type = host_socket_type(a2), fd[2];
+    if (family < 0 || type < 0) {
+        return get_errno(-1);
+    }
+    if (socketpair(family, type, a3, fd)) {
+        return get_errno(-1);
+    }
+    socket_flags(fd[0], a2);
+    socket_flags(fd[1], a2);
+    if (put_user_u32(fd[0], a4) || put_user_u32(fd[1], a4 + 4)) {
+        close(fd[0]);
+        close(fd[1]);
+        return -TARGET_EFAULT;
+    }
+    return 0;
+}
+#endif
+#ifdef TARGET_NR_listen
+case TARGET_NR_listen: {
+    return get_errno(listen(a1, a2));
+}
+#endif
+#ifdef TARGET_NR_shutdown
+case TARGET_NR_shutdown: {
+    return get_errno(shutdown(a1, a2));
+}
+#endif
+#ifdef TARGET_NR_sendto
+case TARGET_NR_sendto: {
+    return guest_sendrecv(a1, a2, a3, a4, a5, a6, true);
+}
+#endif
+#ifdef TARGET_NR_recvfrom
+case TARGET_NR_recvfrom: {
+    return guest_sendrecv(a1, a2, a3, a4, a5, a6, false);
+}
+#endif
+#ifdef TARGET_NR_setsockopt
+case TARGET_NR_setsockopt: {
+    return guest_sockopt(a1, a2, a3, a4, a5, true);
+}
+#endif
+#ifdef TARGET_NR_getsockopt
+case TARGET_NR_getsockopt: {
+    return guest_sockopt(a1, a2, a3, a4, a5, false);
+}
+#endif
+#ifdef TARGET_NR_bind
+case TARGET_NR_bind: {
+    struct sockaddr_storage host;
+    ret = get_sockaddr(&host, a2, a3);
+    if (ret) {
+        return ret;
+    }
+    return get_errno(num == TARGET_NR_bind
+                         ? bind(a1, (struct sockaddr *)&host, a3)
+                         : connect(a1, (struct sockaddr *)&host, a3));
+}
+#endif
+#ifdef TARGET_NR_connect
+case TARGET_NR_connect: {
+    struct sockaddr_storage host;
+    ret = get_sockaddr(&host, a2, a3);
+    if (ret) {
+        return ret;
+    }
+    return get_errno(num == TARGET_NR_bind
+                         ? bind(a1, (struct sockaddr *)&host, a3)
+                         : connect(a1, (struct sockaddr *)&host, a3));
+}
+#endif
+#ifdef TARGET_NR_getsockname
+case TARGET_NR_getsockname: {
+    struct sockaddr_storage host;
+    socklen_t len = sizeof(host);
+    ret = get_errno(num == TARGET_NR_getsockname
+                        ? getsockname(a1, (struct sockaddr *)&host, &len)
+                        : getpeername(a1, (struct sockaddr *)&host, &len));
+    return ret ? ret : put_sockaddr(a2, a3, &host, len);
+}
+#endif
+#ifdef TARGET_NR_getpeername
+case TARGET_NR_getpeername: {
+    struct sockaddr_storage host;
+    socklen_t len = sizeof(host);
+    ret = get_errno(num == TARGET_NR_getsockname
+                        ? getsockname(a1, (struct sockaddr *)&host, &len)
+                        : getpeername(a1, (struct sockaddr *)&host, &len));
+    return ret ? ret : put_sockaddr(a2, a3, &host, len);
+}
+#endif
+#ifdef TARGET_NR_accept
+case TARGET_NR_accept: {
+    struct sockaddr_storage host;
+    socklen_t len = sizeof(host);
+    int flags = num == TARGET_NR_accept4 ? a4 : 0;
+    if (flags & ~(0x800 | 0x80000)) {
+        return -TARGET_EINVAL;
+    }
+    int fd = accept(a1, a2 ? (struct sockaddr *)&host : NULL, a2 ? &len : NULL);
+    if (fd < 0) {
+        return get_errno(-1);
+    }
+    socket_flags(fd, flags);
+    if (a2) {
+        ret = put_sockaddr(a2, a3, &host, len);
+        if (ret) {
+            close(fd);
+            return ret;
+        }
+    }
+    return fd;
+}
+#endif
+#ifdef TARGET_NR_accept4
+case TARGET_NR_accept4: {
+    struct sockaddr_storage host;
+    socklen_t len = sizeof(host);
+    int flags = num == TARGET_NR_accept4 ? a4 : 0;
+    if (flags & ~(0x800 | 0x80000)) {
+        return -TARGET_EINVAL;
+    }
+    int fd = accept(a1, a2 ? (struct sockaddr *)&host : NULL, a2 ? &len : NULL);
+    if (fd < 0) {
+        return get_errno(-1);
+    }
+    socket_flags(fd, flags);
+    if (a2) {
+        ret = put_sockaddr(a2, a3, &host, len);
+        if (ret) {
+            close(fd);
+            return ret;
+        }
+    }
+    return fd;
 }
 #endif
