@@ -26,63 +26,77 @@
 #include "hw/net/mii.h"
 #include "etsec.h"
 #include "registers.h"
+#include "hw/net/trace.h"
 
-/* #define DEBUG_MIIM */
-
-static void miim_read_cycle(eTSEC *etsec)
+uint16_t etsec_phy_read(eTSEC *etsec, unsigned int reg)
 {
-    uint8_t  phy;
-    uint8_t  addr;
+    bool link = etsec->phy_status & MII_BMSR_LINK_ST;
     uint16_t value;
 
-    phy  = (etsec->regs[MIIMADD].value >> 8) & 0x1F;
-    (void)phy; /* Unreferenced */
-    addr = etsec->regs[MIIMADD].value & 0x1F;
-
-    switch (addr) {
+    switch (reg) {
     case MII_BMCR:
         value = etsec->phy_control;
         break;
     case MII_BMSR:
         value = etsec->phy_status;
         break;
+    case MII_ANAR:
+        value = MII_ANAR_PAUSE | MII_ANAR_TXFD | MII_ANAR_TX |
+                MII_ANAR_10FD | MII_ANAR_10 | MII_ANAR_CSMACD;
+        break;
+    case MII_ANLPAR:
+        /* A link partner that can do everything we can */
+        value = link ? MII_ANLPAR_ACK | MII_ANLPAR_PAUSE | MII_ANLPAR_TXFD |
+                       MII_ANLPAR_TX | MII_ANLPAR_10FD | MII_ANLPAR_10 |
+                       MII_ANLPAR_CSMACD : 0;
+        break;
+    case MII_CTRL1000:
+        value = MII_CTRL1000_FULL | MII_CTRL1000_HALF;
+        break;
     case MII_STAT1000:
         value = MII_STAT1000_LOK | MII_STAT1000_ROK;
+        if (link) {
+            value |= MII_STAT1000_FULL | MII_STAT1000_HALF;
+        }
+        break;
+    case MII_EXTSTAT:
+        value = MII_EXTSTAT_1000T_FD | MII_EXTSTAT_1000T_HD;
         break;
     default:
         value = 0x0;
         break;
     };
 
-#ifdef DEBUG_MIIM
-    qemu_log("%s phy:%d addr:0x%x value:0x%x\n", __func__, phy, addr, value);
-#endif
+    trace_etsec_phy_read(reg, value);
 
-    etsec->regs[MIIMSTAT].value = value;
+    return value;
 }
 
-static void miim_write_cycle(eTSEC *etsec)
+void etsec_phy_write(eTSEC *etsec, unsigned int reg, uint16_t value)
 {
-    uint8_t  phy;
-    uint8_t  addr;
-    uint16_t value;
+    trace_etsec_phy_write(reg, value);
 
-    phy   = (etsec->regs[MIIMADD].value >> 8) & 0x1F;
-    (void)phy; /* Unreferenced */
-    addr  = etsec->regs[MIIMADD].value & 0x1F;
-    value = etsec->regs[MIIMCON].value & 0xffff;
-
-#ifdef DEBUG_MIIM
-    qemu_log("%s phy:%d addr:0x%x value:0x%x\n", __func__, phy, addr, value);
-#endif
-
-    switch (addr) {
+    switch (reg) {
     case MII_BMCR:
         etsec->phy_control = value & ~(MII_BMCR_RESET | MII_BMCR_FD);
         break;
     default:
         break;
     };
+}
+
+static void miim_read_cycle(eTSEC *etsec)
+{
+    uint8_t addr = etsec->regs[MIIMADD].value & 0x1F;
+
+    etsec->regs[MIIMSTAT].value = etsec_phy_read(etsec, addr);
+}
+
+static void miim_write_cycle(eTSEC *etsec)
+{
+    uint8_t addr = etsec->regs[MIIMADD].value & 0x1F;
+
+    etsec_phy_write(etsec, addr, etsec->regs[MIIMCON].value & 0xffff);
 }
 
 void etsec_write_miim(eTSEC          *etsec,

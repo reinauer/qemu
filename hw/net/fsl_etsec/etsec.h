@@ -150,4 +150,11 @@ void etsec_write_miim(eTSEC          *etsec,
 
 void etsec_miim_link_status(eTSEC *etsec, NetClientState *nc);
 
+/*
+ * The PHY's registers, for the MIIM registers of this eTSEC or of an
+ * external MDIO controller the PHY sits on
+ */
+uint16_t etsec_phy_read(eTSEC *etsec, unsigned int reg);
+void etsec_phy_write(eTSEC *etsec, unsigned int reg, uint16_t value);
+
 #endif /* ETSEC_H */

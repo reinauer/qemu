@@ -36,6 +36,7 @@
 #include "registers.h"
 #include "qapi/error.h"
 #include "qemu/log.h"
+#include "hw/net/trace.h"
 
 /* #define HEX_DUMP */
 /* #define DEBUG_REGISTER */
@@ -98,6 +99,8 @@ static uint64_t etsec_read(void *opaque, hwaddr addr, unsigned size)
         ret = reg->value;
         break;
     }
+
+    trace_etsec_read(addr, reg->name, ret);
 
     DPRINTF("Read  0x%08x @ 0x" HWADDR_FMT_plx
             "                            : %s (%s)\n",
@@ -217,6 +220,8 @@ static void etsec_write(void     *opaque,
 
     reg = &etsec->regs[reg_index];
     before = reg->value;
+
+    trace_etsec_write(addr, reg->name, value);
 
     switch (reg_index) {
     case IEVENT:
