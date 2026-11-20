@@ -47,6 +47,9 @@ config CS4231
 config ASC
     bool
 
+config FSL_SSI
+    bool
+
 config WM8776
     bool
     depends on I2C
