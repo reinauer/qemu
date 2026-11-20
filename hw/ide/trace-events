@@ -130,3 +130,13 @@ handle_cmd_fis_dump(void *s, int port, const char *fis) "ahci(%p)[%d]: %s"
 # ahci-allwinner.c
 allwinner_ahci_mem_read(void *s, void *a, uint64_t addr, uint64_t val, unsigned size) "ahci(%p): read a=%p addr=0x%"PRIx64" val=0x%"PRIx64", size=%d"
 allwinner_ahci_mem_write(void *s, void *a, uint64_t addr, uint64_t val, unsigned size) "ahci(%p): write a=%p addr=0x%"PRIx64" val=0x%"PRIx64", size=%d"
+
+# fsl-sata.c
+fsl_sata_read(void *s, uint64_t addr, uint32_t val) "fsl-sata %p: read 0x%03"PRIx64" -> 0x%08"PRIx32
+fsl_sata_write(void *s, uint64_t addr, uint32_t val) "fsl-sata %p: write 0x%03"PRIx64" = 0x%08"PRIx32
+fsl_sata_link(void *s, bool online) "fsl-sata %p: online %d"
+fsl_sata_signature(void *s, uint32_t sig) "fsl-sata %p: signature 0x%08"PRIx32
+fsl_sata_exec(void *s, int slot, uint32_t cda, uint32_t desc_info, int prdes, uint8_t fis0, uint8_t fis1, uint8_t cmd) "fsl-sata %p: slot %d cda 0x%08"PRIx32" desc_info 0x%"PRIx32" prdes %d FIS %02x %02x cmd 0x%02x"
+fsl_sata_cmd_done(void *s, int slot, bool error) "fsl-sata %p: slot %d done, error %d"
+fsl_sata_pio_transfer(void *s, bool is_write, uint32_t size) "fsl-sata %p: PIO write %d, %"PRIu32" bytes"
+fsl_sata_sglist(void *s, int prdes, int64_t limit, uint64_t offset, uint64_t size) "fsl-sata %p: %d PRDs limit %"PRId64" offset %"PRIu64" -> %"PRIu64" bytes"
