@@ -1,6 +1,9 @@
 config RC4030
     bool
 
+config FSL_DMA
+    bool
+
 config PL080
     bool
 

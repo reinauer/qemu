@@ -1,5 +1,6 @@
 system_ss.add(when: 'CONFIG_RC4030', if_true: files('rc4030.c'))
 system_ss.add(when: 'CONFIG_PL080', if_true: files('pl080.c'))
+system_ss.add(when: 'CONFIG_FSL_DMA', if_true: files('fsl-dma.c'))
 system_ss.add(when: 'CONFIG_PL330', if_true: files('pl330.c'))
 system_ss.add(when: 'CONFIG_I82374', if_true: files('i82374.c'))
 system_ss.add(when: 'CONFIG_I8257', if_true: files('i8257.c'))

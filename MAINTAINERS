@@ -1605,6 +1605,8 @@ F: hw/gpio/mpc8xxx.c
 F: hw/i2c/mpc_i2c.c
 F: hw/ide/fsl-sata.c
 F: include/hw/ide/fsl-sata.h
+F: hw/dma/fsl-dma.c
+F: include/hw/dma/fsl-dma.h
 F: hw/net/fsl_etsec/
 F: hw/pci-host/ppce500.c
 F: include/hw/ppc/ppc_e500.h

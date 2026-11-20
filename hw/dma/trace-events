@@ -53,3 +53,10 @@ k230_gsdma_read(uint64_t addr, unsigned int size, uint64_t data) "K230 GSDMA rea
 k230_gsdma_write(uint64_t addr, unsigned int size, uint64_t data) "K230 GSDMA write: [0x%"PRIx64"] size %u <- 0x%"PRIx64
 k230_gsdma_read_sdma_llt(uint64_t addr, uint32_t cfg, uint32_t src_addr, uint32_t line_size, uint32_t line_cfg, uint32_t dst_addr, uint32_t next_llt_addr) "K230 GSDMA read SDMA LLT: addr=0x%"PRIx64" cfg=0x%"PRIx32" src=0x%"PRIx32" line_size=0x%"PRIx32" line_cfg=0x%"PRIx32" dst=0x%"PRIx32" next=0x%"PRIx32
 k230_gsdma_read_sdma_llt_failed(uint64_t addr) "K230 GSDMA read SDMA LLT failed: addr=0x%"PRIx64
+
+# fsl-dma.c
+fsl_dma_read(uint64_t addr, uint32_t val) "0x%03"PRIx64" -> 0x%08"PRIx32
+fsl_dma_write(uint64_t addr, uint64_t val) "0x%03"PRIx64" = 0x%08"PRIx64
+fsl_dma_start(int chan, const char *mode, uint32_t clndar) "channel %d: %s mode, link descriptor 0x%08"PRIx32
+fsl_dma_copy(int chan, uint64_t src, uint64_t dst, uint32_t len) "channel %d: 0x%"PRIx64" to 0x%"PRIx64", %"PRIu32" bytes"
+fsl_dma_link(int chan, uint64_t addr, uint32_t sar, uint32_t dar, uint32_t nlndar, uint32_t bcr) "channel %d: link descriptor 0x%"PRIx64": 0x%08"PRIx32" to 0x%08"PRIx32", next 0x%08"PRIx32", %"PRIu32" bytes"
