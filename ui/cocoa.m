@@ -518,6 +518,18 @@ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEven
     [self setBoundsSize:NSMakeSize(screen.width, screen.height)];
 }
 
+/*
+ * A new frame size resets the bounds to it, which leaves the guest screen
+ * drawn at one pixel per point, cropped to the window: with the window sized
+ * to one pixel per device pixel on a Retina display, only the bottom left
+ * quarter of the screen showed.  Keep the bounds at the guest screen's size.
+ */
+- (void) setFrameSize:(NSSize)newSize
+{
+    [super setFrameSize:newSize];
+    [self updateBounds];
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
