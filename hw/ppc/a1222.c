@@ -17,6 +17,7 @@
 #include "e500.h"
 #include "hw/core/sysbus.h"
 #include "hw/ide/fsl-sata.h"
+#include "hw/usb/hcd-ehci.h"
 #include "system/blockdev.h"
 #include "system/device_tree.h"
 #include "hw/ppc/openpic.h"
@@ -39,10 +40,23 @@ static const struct {
     { 0x19000, 41 },
 };
 
+/*
+ * The P1022's two USB controllers, in the order of their AmigaOS unit
+ * numbers, so that usb-bus.0 is unit 0 and usb-bus.1 unit 1
+ */
+static const struct {
+    hwaddr offset;
+    int irq;
+} a1222_usb[] = {
+    { 0x22000, 28 },
+    { 0x23000, 46 },
+};
+
 static void a1222_fixup_devtree(void *fdt)
 {
     const char model[] = "AmigaOne A1222";
     const char compatible[] = "fsl,P1022\0fsl,P1022DS";
+    const char usb_compatible[] = "fsl-usb2-dr-v1.6\0fsl-usb2-dr";
     g_autofree char *soc = g_strdup_printf("/soc@%llx", A1222_CCSR_BASE);
     /* The MPIC node as ppce500_load_device_tree() names it */
     g_autofree char *mpic = g_strdup_printf("%s/pic@40000", soc);
@@ -63,6 +77,22 @@ static void a1222_fixup_devtree(void *fdt)
         qemu_fdt_setprop_cell(fdt, node, "cell-index", i + 1);
         qemu_fdt_setprop_cells(fdt, node, "interrupts", a1222_sata[i].irq, 2);
         qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+    }
+
+    for (i = ARRAY_SIZE(a1222_usb) - 1; i >= 0; i--) {
+        g_autofree char *node = g_strdup_printf("%s/usb@%" HWADDR_PRIx, soc,
+                                                a1222_usb[i].offset);
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop(fdt, node, "compatible", usb_compatible,
+                         sizeof(usb_compatible));
+        qemu_fdt_setprop_cells(fdt, node, "reg", a1222_usb[i].offset, 0x1000);
+        qemu_fdt_setprop_cells(fdt, node, "interrupts", a1222_usb[i].irq, 2);
+        qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+        qemu_fdt_setprop_cell(fdt, node, "#address-cells", 1);
+        qemu_fdt_setprop_cell(fdt, node, "#size-cells", 0);
+        qemu_fdt_setprop_string(fdt, node, "dr_mode", "host");
+        qemu_fdt_setprop_string(fdt, node, "phy_type", "ulpi");
     }
 }
 
@@ -89,6 +119,28 @@ static void a1222_init_sata(MachineState *machine)
     }
 }
 
+static void a1222_init_usb(MachineState *machine)
+{
+    DeviceState *mpic = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "pic"));
+    SysBusDevice *ccsr = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "e500-ccsr"));
+    MemoryRegion *ccsr_space = sysbus_mmio_get_region(ccsr, 0);
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(a1222_usb); i++) {
+        DeviceState *dev = qdev_new(TYPE_FSL_EHCI);
+        SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+        g_autofree char *name = g_strdup_printf("usb%d", i);
+
+        object_property_add_child(OBJECT(machine), name, OBJECT(dev));
+        sysbus_realize_and_unref(sbd, &error_fatal);
+        sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(mpic, a1222_usb[i].irq));
+        memory_region_add_subregion(ccsr_space, a1222_usb[i].offset,
+                                    sysbus_mmio_get_region(sbd, 0));
+    }
+}
+
 static void a1222_init(MachineState *machine)
 {
     if (machine->ram_size > 2 * GiB) {
@@ -98,6 +150,7 @@ static void a1222_init(MachineState *machine)
 
     ppce500_init(machine);
     a1222_init_sata(machine);
+    a1222_init_usb(machine);
 }
 
 static void a1222_machine_class_init(ObjectClass *oc, const void *data)
