@@ -2,6 +2,12 @@ if not have_linux_user
    subdir_done()
 endif
 
+if host_os == 'darwin'
+  if host_arch != 'aarch64' or target_dirs != ['x86_64-linux-user']
+    error('Experimental Darwin linux-user requires an ARM64 host and x86_64-linux-user only')
+  endif
+endif
+
 linux_user_ss = ss.source_set()
 
 common_user_inc += include_directories('include/host/' / host_arch)
@@ -10,17 +16,19 @@ common_user_inc += include_directories('include')
 linux_user_ss.add(files(
   'elfload.c',
   'exit.c',
-  'fd-trans.c',
   'linuxload.c',
   'main.c',
   'mmap.c',
   'signal.c',
-  'strace.c',
-  'syscall.c',
   'thunk.c',
   'uaccess.c',
   'uname.c',
 ))
+if host_os == 'darwin'
+  linux_user_ss.add(files('darwin/syscall.c', 'darwin/strace.c'))
+else
+  linux_user_ss.add(files('syscall.c', 'strace.c', 'fd-trans.c'))
+endif
 linux_user_ss.add(rt)
 linux_user_ss.add(libdw)
 

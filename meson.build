@@ -3311,7 +3311,7 @@ foreach target : target_dirs
   endif
 
   if target.endswith('linux-user')
-    if host_os != 'linux'
+    if host_os not in ['linux', 'darwin']
       if default_targets
         continue
       endif
