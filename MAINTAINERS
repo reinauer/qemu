@@ -1609,6 +1609,8 @@ F: hw/display/fsl-diu.c
 F: include/hw/display/fsl-diu.h
 F: hw/dma/fsl-dma.c
 F: include/hw/dma/fsl-dma.h
+F: hw/rtc/mcp7940.c
+F: include/hw/rtc/mcp7940.h
 F: hw/net/fsl_etsec/
 F: hw/pci-host/ppce500.c
 F: include/hw/ppc/ppc_e500.h
