@@ -44,6 +44,8 @@ static void __attribute__((constructor)) init(void)
         (sysctl(mib, ARRAY_SIZE(mib), &info, &info_len, NULL, 0) < 0
          ? qemu_real_host_page_size()
          : info.kvm_min_user_addr);
+#elif defined(__APPLE__)
+    mmap_min_addr = 0x100000000ULL;
 #else
 # error
 #endif

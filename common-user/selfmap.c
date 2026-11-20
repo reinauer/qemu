@@ -9,6 +9,11 @@
 #include "qemu/osdep.h"
 #include "qemu/cutils.h"
 #include "user/selfmap.h"
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <libproc.h>
+#endif
 #ifdef __FreeBSD__
 #include <sys/sysctl.h>
 #include <sys/user.h>
@@ -123,6 +128,50 @@ IntervalTreeRoot *read_self_maps(void)
         i += k->kve_structsize;
     }
 
+    return root;
+#elif defined(__APPLE__)
+    IntervalTreeRoot *root = g_new0(IntervalTreeRoot, 1);
+    /* Darwin may reserve unmapped address ranges for allocation classes.
+     * Probe the ordinary anonymous arena instead of assuming low holes are
+     * available to mmap, even when Mach's region walk omits those holes.
+     */
+    size_t probe_len = qemu_real_host_page_size();
+    void *probe = mmap(NULL, probe_len, PROT_NONE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (probe != MAP_FAILED) {
+        MapInfo *guard = g_new0(MapInfo, 1);
+        guard->itree.start = 0;
+        guard->itree.last = (uintptr_t)probe - 1;
+        interval_tree_insert(&guard->itree, root);
+        munmap(probe, probe_len);
+    }
+    mach_vm_address_t addr = 0;
+    mach_vm_size_t size;
+    natural_t depth = 0;
+    while (true) {
+        struct vm_region_submap_info_64 info;
+        mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+        if (mach_vm_region_recurse(mach_task_self(), &addr, &size, &depth,
+                (vm_region_recurse_info_t)&info, &count) != KERN_SUCCESS) {
+            break;
+        }
+        if (info.is_submap) {
+            depth++;
+            continue;
+        }
+        MapInfo *e = g_new0(MapInfo, 1);
+        e->itree.start = addr;
+        e->itree.last = addr + size - 1;
+        e->is_read = info.protection & VM_PROT_READ;
+        e->is_write = info.protection & VM_PROT_WRITE;
+        e->is_exec = info.protection & VM_PROT_EXECUTE;
+        e->is_priv = info.share_mode != SM_SHARED;
+        e->offset = info.offset;
+        interval_tree_insert(&e->itree, root);
+        if (!size || addr + size < addr) {
+            break;
+        }
+        addr += size;
+    }
     return root;
 #else
 # error

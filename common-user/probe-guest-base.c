@@ -90,7 +90,14 @@ static bool pgb_try_mmap_set(const PGBAddrs *ga, uintptr_t base, uintptr_t brk)
     for (int i = ga->nbounds - 1; i >= 0; --i) {
         if (pgb_try_mmap_skip_brk(ga->bounds[i].lo + base,
                                   ga->bounds[i].hi + base,
-                                  brk, i == 0 && reserved_va) <= 0) {
+                                  brk, i == 0 && (reserved_va
+#ifdef __APPLE__
+                                  /* Keep the NULL guard: Darwin may ignore
+                                   * mmap hints and allocate across guest_base.
+                                   */
+                                  || (base && ga->bounds[0].lo == 0)
+#endif
+                                  )) <= 0) {
             return false;
         }
     }
@@ -233,7 +240,7 @@ static uintptr_t pgb_try_itree(const PGBAddrs *ga, uintptr_t base,
 static uintptr_t pgb_find_itree(const PGBAddrs *ga, IntervalTreeRoot *root,
                                 uintptr_t align, uintptr_t brk)
 {
-    uintptr_t last = sizeof(uintptr_t) == 4 ? MiB : GiB;
+    uintptr_t last = MAX(mmap_min_addr, sizeof(uintptr_t) == 4 ? MiB : GiB);
     uintptr_t base, skip;
 
     while (true) {
@@ -325,7 +332,8 @@ void probe_guest_base(const char *image_name, const PGBRange *image_range,
                       const PGBRange *commpage_range)
 {
     /* In order to use host shmat, we must be able to honor SHMLBA.  */
-    uintptr_t align = MAX(SHMLBA, TARGET_PAGE_SIZE);
+    uintptr_t align = MAX(MAX(SHMLBA, TARGET_PAGE_SIZE),
+                          qemu_real_host_page_size());
 
     /* Sanity check the guest binary. */
     if (reserved_va && image_range && image_range->hi > reserved_va) {
