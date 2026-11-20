@@ -888,6 +888,49 @@ static inline int platform_does_not_support_system(const char *command)
 }
 #endif /* !HAVE_SYSTEM_FUNCTION */
 
+#if defined(__APPLE__) && (defined(COMPILING_PER_TARGET) || \
+                          defined(COMPILING_SYSTEM_VS_USER))
+#ifdef CONFIG_USER_ONLY
+#define _NSIG NSIG
+#define SIGRTMIN NSIG
+#define SIGRTMAX (NSIG - 1)
+#define MAP_FIXED_NOREPLACE 0x100000
+#define MAP_TYPE 0x0f
+#define MREMAP_MAYMOVE 1
+#define MREMAP_FIXED 2
+#endif
+#endif
+#if defined(__APPLE__) && (defined(COMPILING_PER_TARGET) || \
+                          defined(COMPILING_SYSTEM_VS_USER))
+#ifdef CONFIG_USER_ONLY
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+static inline void *qemu_darwin_user_mmap(void *addr, size_t len, int prot,
+                                          int flags, int fd, off_t offset)
+{
+    bool reserve = flags & MAP_FIXED_NOREPLACE;
+    if (reserve) {
+        mach_vm_address_t start = (uintptr_t)addr;
+        kern_return_t kr = mach_vm_allocate(mach_task_self(), &start, len,
+                                            VM_FLAGS_FIXED);
+        if (kr != KERN_SUCCESS) {
+            errno = kr == KERN_NO_SPACE ? EEXIST : ENOMEM;
+            return MAP_FAILED;
+        }
+        flags = (flags & ~MAP_FIXED_NOREPLACE) | MAP_FIXED;
+    }
+    void *p = mmap(addr, len, prot, flags, fd, offset);
+    if (reserve && p == MAP_FAILED) {
+        int saved_errno = errno;
+        mach_vm_deallocate(mach_task_self(), (uintptr_t)addr, len);
+        errno = saved_errno;
+    }
+    return p;
+}
+#define mmap qemu_darwin_user_mmap
+#endif
+#endif
+
 #ifdef __cplusplus
 }
 #endif
