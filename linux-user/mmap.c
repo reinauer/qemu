@@ -18,6 +18,10 @@
  */
 #include "qemu/osdep.h"
 #include <sys/shm.h>
+#ifdef __APPLE__
+#define SHM_REMAP 040000
+#define SHM_EXEC 0100000
+#endif
 #include "trace.h"
 #include "exec/log.h"
 #include "exec/page-protection.h"
@@ -301,6 +305,32 @@ static int do_munmap(void *addr, size_t len)
  */
 static bool mmap_pread(int fd, void *p, size_t len, off_t offset, bool zero)
 {
+#ifdef __APPLE__
+    /* Avoid faulting a file-backed destination while pread holds the vnode.
+     * A partial host page can already map the same file on 16 KiB hosts.
+     */
+    char bounce[16384];
+    while (len) {
+        ssize_t r = pread(fd, bounce, MIN(len, sizeof(bounce)), offset);
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (!r) {
+            if (zero) {
+                memset(p, 0, len);
+            }
+            return true;
+        }
+        memcpy(p, bounce, r);
+        p += r;
+        len -= r;
+        offset += r;
+    }
+    return true;
+#else
     while (1) {
         ssize_t r = pread(fd, p, len, offset);
 
@@ -325,6 +355,7 @@ static bool mmap_pread(int fd, void *p, size_t len, off_t offset, bool zero)
             return false;
         }
     }
+#endif
 }
 
 /*
@@ -400,6 +431,31 @@ static bool mmap_frag(abi_ulong real_start, abi_ulong start, abi_ulong last,
             return false;
         }
     }
+
+#ifdef __APPLE__
+    /*
+     * A previous ELF reservation may map this entire host page beyond EOF.
+     * mprotect succeeds, but accessing it still raises KERN_MEMORY_ERROR.
+     * Mach's checked read reports this as KERN_INVALID_ADDRESS on Darwin.
+     * mprotect above established that the host mapping itself exists.
+     * There are no valid old bytes in such a host page to preserve.
+     */
+    uint8_t probe;
+    mach_vm_size_t copied;
+    kern_return_t kr = mach_vm_read_overwrite(mach_task_self(),
+        (mach_vm_address_t)host_start, sizeof(probe),
+        (mach_vm_address_t)&probe, &copied);
+    if (kr == KERN_MEMORY_ERROR || kr == KERN_INVALID_ADDRESS) {
+        void *p = mmap(host_start, host_page_size, host_prot_old,
+                       MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        if (p == MAP_FAILED) {
+            return false;
+        }
+    } else if (kr != KERN_SUCCESS) {
+        errno = EFAULT;
+        return false;
+    }
+#endif
 
     /* Read or zero the new guest pages. */
     if (flags & MAP_ANONYMOUS) {
@@ -1115,6 +1171,10 @@ abi_long target_mremap(abi_ulong old_addr, abi_ulong old_size,
                        abi_ulong new_size, unsigned long flags,
                        abi_ulong new_addr)
 {
+#ifdef __APPLE__
+    errno = ENOSYS;
+    return -1;
+#else
     int prot;
     void *host_addr;
 
@@ -1258,12 +1318,15 @@ abi_long target_mremap(abi_ulong old_addr, abi_ulong old_size,
     }
     mmap_unlock();
     return new_addr;
+#endif
 }
 
 abi_long target_madvise(abi_ulong start, abi_ulong len_in, int advice)
 {
     abi_ulong len;
+#ifndef __APPLE__
     int ret = 0;
+#endif
 
     if (start & ~TARGET_PAGE_MASK) {
         return -TARGET_EINVAL;
@@ -1276,6 +1339,20 @@ abi_long target_madvise(abi_ulong start, abi_ulong len_in, int advice)
         return -TARGET_EINVAL;
     }
 
+#ifdef __APPLE__
+    if (!page_check_range(start, len, PAGE_VALID)) {
+        return -TARGET_ENOMEM;
+    }
+    switch (advice) {
+    case TARGET_MADV_NORMAL:
+    case TARGET_MADV_RANDOM:
+    case TARGET_MADV_SEQUENTIAL:
+    case TARGET_MADV_WILLNEED:
+        return 0;
+    default:
+        return -TARGET_EINVAL;
+    }
+#else
     /* Translate for some architectures which have different MADV_xxx values */
     switch (advice) {
     case TARGET_MADV_DONTNEED:      /* alpha */
@@ -1377,6 +1454,7 @@ abi_long target_madvise(abi_ulong start, abi_ulong len_in, int advice)
     mmap_unlock();
 
     return ret;
+#endif
 }
 
 #ifndef TARGET_FORCE_SHMLBA
