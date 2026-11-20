@@ -1854,6 +1854,24 @@ void tcg_gen_lookup_and_goto_ptr(void)
     tcg_temp_free_ptr(ptr);
 }
 
+void tcg_gen_lookup_and_goto_ptr_key(TCGv_i64 pc, uint32_t flags,
+                                   uint64_t cs_base)
+{
+    TCGv_ptr ptr;
+
+    if (tcg_ctx->gen_tb->cflags & CF_NO_GOTO_PTR) {
+        tcg_gen_exit_tb(NULL, 0);
+        return;
+    }
+
+    plugin_gen_disable_mem_helpers();
+    ptr = tcg_temp_ebb_new_ptr();
+    gen_helper_lookup_tb_ptr_key(ptr, tcg_env, pc, tcg_constant_i32(flags),
+                                tcg_constant_i64(cs_base));
+    tcg_gen_op1i(INDEX_op_goto_ptr, TCG_TYPE_PTR, tcgv_ptr_arg(ptr));
+    tcg_temp_free_ptr(ptr);
+}
+
 /* Host pointer operations */
 
 void tcg_gen_add_ptr(TCGv_ptr r, TCGv_ptr a, TCGv_ptr b)

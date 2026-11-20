@@ -100,6 +100,10 @@ void tcg_gen_goto_tb(unsigned idx);
  */
 void tcg_gen_lookup_and_goto_ptr(void);
 
+/* The caller must provide the complete, current target-specific TB key. */
+void tcg_gen_lookup_and_goto_ptr_key(TCGv_i64 pc, uint32_t flags,
+                                   uint64_t cs_base);
+
 void tcg_gen_plugin_cb(unsigned from);
 QEMU_ARG_NONNULL
 void tcg_gen_plugin_mem_cb(TCGv_i64 addr, unsigned meminfo);
