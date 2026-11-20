@@ -175,6 +175,10 @@
 #define PM4_FIFO_DATA_EVEN                      0x1000
 #define PM4_FIFO_DATA_ODD                       0x1004
 
+#define CP_CSQ_APER_PRIMARY                     0x1000
+#define CP_CSQ_APER_PRIMARY_END                 0x11fc
+#define CP_CSQ_APER_INDIRECT                    0x1300
+#define CP_CSQ_APER_INDIRECT_END                0x13fc
 #define DST_OFFSET                              0x1404
 #define DST_PITCH                               0x1408
 #define DST_WIDTH                               0x140c

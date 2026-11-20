@@ -97,6 +97,14 @@ typedef struct ATIVGARegs {
     uint32_t default_tile;
 } ATIVGARegs;
 
+/* The packet that the command processor takes in PIO mode */
+typedef struct ATICCEState {
+    uint32_t header;
+    uint32_t left;      /* dwords still to come */
+    uint32_t idx;       /* dwords that came */
+    uint32_t args[5];
+} ATICCEState;
+
 typedef struct ATIHostDataState {
     bool active;
     uint32_t row;
@@ -126,12 +134,15 @@ struct ATIVGAState {
     MemoryRegion mm;
     ATIVGARegs regs;
     ATIHostDataState host_data;
+    ATICCEState cce;
 };
 
 const char *ati_reg_name(int num);
 
+void ati_mm_write(void *opaque, hwaddr addr, uint64_t data, unsigned int size);
 void ati_2d_blt(ATIVGAState *s);
 bool ati_host_data_flush(ATIVGAState *s);
 void ati_host_data_finish(ATIVGAState *s);
+void ati_cce_write(ATIVGAState *s, uint32_t data);
 
 #endif /* ATI_INT_H */

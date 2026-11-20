@@ -589,8 +589,8 @@ static inline void ati_reg_write_offs(uint32_t *reg, int offs,
     }
 }
 
-static void ati_mm_write(void *opaque, hwaddr addr,
-                           uint64_t data, unsigned int size)
+void ati_mm_write(void *opaque, hwaddr addr,
+                  uint64_t data, unsigned int size)
 {
     ATIVGAState *s = opaque;
 
@@ -1072,6 +1072,17 @@ static void ati_mm_write(void *opaque, hwaddr addr,
             s->host_data.next = 0;
         }
         break;
+    case CP_CSQ_APER_PRIMARY ... CP_CSQ_APER_PRIMARY_END + 3:
+        if (size == 4) {
+            ati_cce_write(s, data);
+        } else {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "ati: %u byte write to the command queue\n", size);
+        }
+        break;
+    case CP_CSQ_APER_INDIRECT ... CP_CSQ_APER_INDIRECT_END + 3:
+        qemu_log_mask(LOG_UNIMP, "ati: indirect command queue\n");
+        break;
     default:
         break;
     }
@@ -1120,7 +1131,13 @@ static void ati_mm_swap_write(void *opaque, hwaddr addr, uint64_t data,
 {
     ATIVGAState *s = opaque;
 
-    if (!ati_mm_swapped(s)) {
+    /*
+     * The command queue takes PM4 packets, which are a stream of data rather
+     * than registers.  AmigaOS's ATIRadeon.chip writes them little endian,
+     * whatever APER_REG_ENDIAN says.
+     */
+    if (!ati_mm_swapped(s) ||
+        (addr >= CP_CSQ_APER_PRIMARY && addr <= CP_CSQ_APER_INDIRECT_END + 3)) {
         ati_mm_write(s, addr, data, size);
         return;
     }
@@ -1252,6 +1269,7 @@ static void ati_vga_reset(DeviceState *dev)
 
     s->host_data.active = false;
     s->host_data.next = 0;
+    memset(&s->cce, 0, sizeof(s->cce));
     s->host_data.row = 0;
     s->host_data.col = 0;
 }
