@@ -1600,6 +1600,7 @@ L: qemu-ppc@nongnu.org
 S: Odd Fixes
 F: hw/ppc/e500*
 F: hw/ppc/ppce500_spin.c
+F: hw/ppc/a1222.c
 F: hw/gpio/mpc8xxx.c
 F: hw/i2c/mpc_i2c.c
 F: hw/net/fsl_etsec/

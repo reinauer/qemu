@@ -177,6 +177,12 @@ config MPC8544DS
     depends on PPC && FDT
     select E500
 
+config A1222
+    bool
+    default y
+    depends on PPC && FDT
+    select E500
+
 config VIRTEX
     bool
     default y
