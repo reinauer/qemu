@@ -1797,7 +1797,7 @@ struct target_stat64 {
     abi_ulong    target_st_mtime_nsec;
     abi_ulong    target_st_ctime;
     abi_ulong    target_st_ctime_nsec;
-    abi_long     __unused[3];
+    abi_long     unused_fields[3];
 };
 
 #elif defined(TARGET_SH4)
@@ -1884,7 +1884,7 @@ struct target_stat {
     abi_ulong       target_st_ctime;
     abi_ulong       target_st_ctime_nsec;
 
-    abi_long        __unused[3];
+    abi_long        unused_fields[3];
 };
 #elif defined(TARGET_S390X)
 struct target_stat {
@@ -1905,7 +1905,7 @@ struct target_stat {
     abi_ulong  target_st_ctime_nsec;
     abi_ulong  st_blksize;
     abi_long       st_blocks;
-    abi_ulong  __unused[3];
+    abi_ulong  unused_fields[3];
 };
 #elif defined(TARGET_AARCH64)
 #define TARGET_STAT_HAVE_NSEC
@@ -1928,7 +1928,7 @@ struct target_stat {
     abi_ulong  target_st_mtime_nsec;
     abi_long  target_st_ctime;
     abi_ulong  target_st_ctime_nsec;
-    abi_uint __unused[2];
+    abi_uint unused_fields[2];
 };
 #elif defined(TARGET_XTENSA)
 #define TARGET_STAT_HAVE_NSEC
