@@ -18,6 +18,7 @@
 #include "hw/core/irq.h"
 #include "hw/pci/pci_device.h"
 #include "hw/scsi/scsi.h"
+#include "hw/core/qdev-properties.h"
 #include "migration/vmstate.h"
 #include "system/dma.h"
 #include "qemu/log.h"
@@ -227,6 +228,7 @@ struct LSIState {
     MemoryRegion io_io;
     AddressSpace pci_io_as;
     QEMUTimer *scripts_timer;
+    bool disconnect;
 
     int carry; /* ??? Should this be in a visible register somewhere?  */
     int status;
@@ -900,8 +902,14 @@ static void lsi_do_command(LSIState *s)
         }
         scsi_req_continue(s->current->req);
     }
+    /*
+     * Without disconnects, a command that waits for its data stays connected
+     * in the data phase: the SCRIPTS' block move waits in lsi_do_dma until
+     * lsi_transfer_data brings the data.  For drivers that can't take the
+     * reselection that ends a disconnect, such as AmigaOS's lsi53c8xx.device.
+     */
     if (!s->command_complete) {
-        if (n) {
+        if (n && s->disconnect) {
             /* Command did not complete immediately so disconnect.  */
             lsi_add_msg_byte(s, 2); /* SAVE DATA POINTER */
             lsi_add_msg_byte(s, 4); /* DISCONNECT */
@@ -909,7 +917,7 @@ static void lsi_do_command(LSIState *s)
             lsi_set_phase(s, PHASE_MI);
             s->msg_action = LSI_MSG_ACTION_DISCONNECT;
             lsi_queue_command(s);
-        } else {
+        } else if (!n) {
             /* wait command complete */
             lsi_set_phase(s, PHASE_DI);
         }
@@ -2398,6 +2406,11 @@ static void lsi_scsi_exit(PCIDevice *dev)
     timer_free(s->scripts_timer);
 }
 
+static const Property lsi_properties[] = {
+    /* Whether targets disconnect from commands that wait for their data */
+    DEFINE_PROP_BOOL("disconnect", LSIState, disconnect, true),
+};
+
 static void lsi_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -2411,6 +2424,7 @@ static void lsi_class_init(ObjectClass *klass, const void *data)
     k->subsystem_id = 0x1000;
     device_class_set_legacy_reset(dc, lsi_scsi_reset);
     dc->vmsd = &vmstate_lsi_scsi;
+    device_class_set_props(dc, lsi_properties);
     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
 }
 
