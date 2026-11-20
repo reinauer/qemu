@@ -732,6 +732,15 @@ static void ehci_queues_rip_all(EHCIState *ehci, int async)
     }
 }
 
+/*
+ * Without port power control ports are always powered.  An unpowered port
+ * is non-functional and does not report attaches or detaches (EHCI 2.3.9).
+ */
+static bool ehci_port_powered(EHCIState *s, int port)
+{
+    return !s->port_power_control || (s->portsc[port] & PORTSC_PPOWER);
+}
+
 /* Attach or detach a device on root hub */
 
 static void ehci_attach(USBPort *port)
@@ -746,6 +755,10 @@ static void ehci_attach(USBPort *port)
         USBPort *companion = s->companion_ports[port->index];
         companion->dev = port->dev;
         companion->ops->attach(companion);
+        return;
+    }
+
+    if (!ehci_port_powered(s, port->index)) {
         return;
     }
 
@@ -777,6 +790,10 @@ static void ehci_detach(USBPort *port)
 
     ehci_queues_rip_device(s, port->dev, 0);
     ehci_queues_rip_device(s, port->dev, 1);
+
+    if (!ehci_port_powered(s, port->index)) {
+        return;
+    }
 
     *portsc &= ~(PORTSC_CONNECT | PORTSC_PED | PORTSC_SUSPEND);
     *portsc |= PORTSC_CSC;
@@ -923,10 +940,10 @@ void ehci_reset(void *opaque)
     s->pstate = EST_INACTIVE;
 
     for (i = 0; i < EHCI_PORTS; i++) {
+        /* With port power control, ports come out of reset switched off */
+        s->portsc[i] = s->port_power_control ? 0 : PORTSC_PPOWER;
         if (s->companion_ports[i]) {
-            s->portsc[i] = PORTSC_POWNER | PORTSC_PPOWER;
-        } else {
-            s->portsc[i] = PORTSC_PPOWER;
+            s->portsc[i] |= PORTSC_POWNER;
         }
         if (devs[i] && devs[i]->attached) {
             usb_attach(&s->ports[i]);
@@ -1010,6 +1027,33 @@ static void handle_port_owner_write(EHCIState *s, int port, uint32_t owner)
     }
 }
 
+/* Port power was switched on or off through PORTSC.PP */
+static void ehci_port_power_changed(EHCIState *s, int port)
+{
+    uint32_t *portsc = &s->portsc[port];
+    USBDevice *dev = s->ports[port].dev;
+
+    if (*portsc & PORTSC_POWNER) {
+        return;
+    }
+
+    if (*portsc & PORTSC_PPOWER) {
+        /* A device that is plugged in shows up once the port has power */
+        if (dev && dev->attached) {
+            *portsc |= PORTSC_CONNECT | PORTSC_CSC;
+            ehci_raise_irq(s, USBSTS_PCD);
+        }
+    } else if (*portsc & PORTSC_CONNECT) {
+        /* ... and drops off the bus when it loses it */
+        ehci_queues_rip_device(s, dev, 0);
+        ehci_queues_rip_device(s, dev, 1);
+        *portsc &= ~(PORTSC_CONNECT | PORTSC_PED | PORTSC_SUSPEND |
+                     PORTSC_PRESET);
+        *portsc |= PORTSC_CSC;
+        ehci_raise_irq(s, USBSTS_PCD);
+    }
+}
+
 static void ehci_port_write(void *ptr, hwaddr addr,
                             uint64_t val, unsigned size)
 {
@@ -1018,6 +1062,11 @@ static void ehci_port_write(void *ptr, hwaddr addr,
     uint32_t *portsc = &s->portsc[port];
     uint32_t old = *portsc;
     USBDevice *dev = s->ports[port].dev;
+    uint32_t rw_mask = PORTSC_RO_MASK;
+
+    if (s->port_power_control) {
+        rw_mask |= PORTSC_PPOWER;
+    }
 
     trace_usb_ehci_portsc_write(addr + s->portscbase, addr >> 2, val);
 
@@ -1028,7 +1077,7 @@ static void ehci_port_write(void *ptr, hwaddr addr,
     /* POWNER is masked out by RO_MASK as it is RO when we've no companion */
     handle_port_owner_write(s, port, val);
     /* And finally apply RO_MASK */
-    val &= PORTSC_RO_MASK;
+    val &= rw_mask;
 
     if ((val & PORTSC_PRESET) && !(*portsc & PORTSC_PRESET)) {
         trace_usb_ehci_port_reset(port, 1);
@@ -1036,7 +1085,7 @@ static void ehci_port_write(void *ptr, hwaddr addr,
 
     if (!(val & PORTSC_PRESET) && (*portsc & PORTSC_PRESET)) {
         trace_usb_ehci_port_reset(port, 0);
-        if (dev && dev->attached) {
+        if (dev && dev->attached && ehci_port_powered(s, port)) {
             usb_port_reset(&s->ports[port]);
             *portsc &= ~PORTSC_CSC;
         }
@@ -1045,7 +1094,8 @@ static void ehci_port_write(void *ptr, hwaddr addr,
          *  Table 2.16 Set the enable bit(and enable bit change) to indicate
          *  to SW that this port has a high speed device attached
          */
-        if (dev && dev->attached && (dev->speedmask & USB_SPEED_MASK_HIGH)) {
+        if (dev && dev->attached && ehci_port_powered(s, port) &&
+            (dev->speedmask & USB_SPEED_MASK_HIGH)) {
             val |= PORTSC_PED;
         }
     }
@@ -1058,8 +1108,11 @@ static void ehci_port_write(void *ptr, hwaddr addr,
         val &= ~PORTSC_SUSPEND;
     }
 
-    *portsc &= ~PORTSC_RO_MASK;
+    *portsc &= ~rw_mask;
     *portsc |= val;
+    if ((old ^ *portsc) & PORTSC_PPOWER) {
+        ehci_port_power_changed(s, port);
+    }
     trace_usb_ehci_portsc_change(addr + s->portscbase, addr >> 2, *portsc, old);
 }
 
@@ -2684,6 +2737,9 @@ void usb_ehci_init(EHCIState *s, DeviceState *dev)
     s->caps[0x02] = 0x00;
     s->caps[0x03] = 0x01;        /* HC version */
     s->caps[0x04] = s->portnr;   /* Number of downstream ports */
+    if (s->port_power_control) {
+        s->caps[0x04] |= 0x10;   /* Port power control (PPC) */
+    }
     s->caps[0x05] = 0x00;        /* No companion ports at present */
     s->caps[0x06] = 0x00;
     s->caps[0x07] = 0x00;

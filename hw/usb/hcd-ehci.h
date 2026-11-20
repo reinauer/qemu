@@ -259,6 +259,11 @@ struct EHCIState {
     uint16_t opregbase;
     uint16_t portscbase;
     uint16_t portnr;
+    /*
+     * Port power is switched by software through PORTSC.PP (HCSPARAMS.PPC
+     * set), so that a port neither reports nor talks to a device while off
+     */
+    bool port_power_control;
 
     /* properties */
     uint32_t maxframes;
@@ -386,6 +391,7 @@ struct SysBusEHCIClass {
     uint16_t opregbase;
     uint16_t portscbase;
     uint16_t portnr;
+    bool port_power_control;
 };
 
 OBJECT_DECLARE_SIMPLE_TYPE(FUSBH200EHCIState, FUSBH200_EHCI)
