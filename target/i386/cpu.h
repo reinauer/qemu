@@ -3135,7 +3135,7 @@ static inline bool x86_cpu_interrupts_enabled(const CPUX86State *env)
 
 #if defined(TARGET_X86_64) && \
     defined(CONFIG_USER_ONLY) && \
-    defined(CONFIG_LINUX)
+    defined(CONFIG_LINUX_USER)
 # define TARGET_VSYSCALL_PAGE  (UINT64_C(-10) << 20)
 #endif
 
