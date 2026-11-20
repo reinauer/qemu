@@ -227,3 +227,8 @@ apple_gfx_iosfc_unmap_memory(void *a, void *b, void *c, void *d, void *e, void *
 apple_gfx_iosfc_unmap_memory_region(void* mem, void *region) "unmapping @ %p from memory region %p"
 apple_gfx_iosfc_raise_irq(uint32_t vector) "vector=0x%x"
 
+
+# fsl-diu.c
+fsl_diu_read(uint64_t addr, uint32_t val) "0x%03"PRIx64" -> 0x%08"PRIx32
+fsl_diu_write(uint64_t addr, uint64_t val) "0x%03"PRIx64" = 0x%08"PRIx64
+fsl_diu_format(uint32_t pix_fmt, unsigned bypp, bool big_endian, bool paletted) "pixel format 0x%08"PRIx32": %u bytes, big-endian %d, paletted %d"
