@@ -15,12 +15,20 @@
 
 #include "qemu/osdep.h"
 #include "e500.h"
+#include "hw/core/or-irq.h"
+#include "hw/core/qdev-properties.h"
 #include "hw/core/sysbus.h"
+#include "hw/display/fsl-diu.h"
 #include "hw/dma/fsl-dma.h"
+#include "hw/display/i2c-ddc.h"
+#include "hw/i2c/bitbang_i2c.h"
+#include "hw/i2c/i2c.h"
 #include "hw/ide/fsl-sata.h"
 #include "hw/usb/hcd-ehci.h"
 #include "system/blockdev.h"
+#include "system/system.h"
 #include "system/device_tree.h"
+#include "system/address-spaces.h"
 #include "hw/ppc/openpic.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
@@ -52,6 +60,25 @@ static const struct {
     { 0x22000, 28 },
     { 0x23000, 46 },
 };
+
+/* The display interface unit */
+#define A1222_DIU_OFFSET    0x10000
+#define A1222_DIU_IRQ       64
+
+/*
+ * The second I2C controller, with the DVI transmitter; it shares its
+ * interrupt with the first, which the e500 machine sets up
+ */
+#define A1222_I2C2_OFFSET   0x3100
+#define A1222_I2C_IRQ       43
+
+/*
+ * The GPIO bank at 0xf200, whose pins 20 and 21 (in the bank's big-endian
+ * numbering) are the SDA and SCL lines of the DVI port's DDC
+ */
+#define A1222_GPIO3_OFFSET  0xF200
+#define A1222_DDC_SDA       20
+#define A1222_DDC_SCL       21
 
 /*
  * The two DMA controllers' channels, and their first channel's interrupt;
@@ -108,6 +135,34 @@ static void a1222_fixup_devtree(void *fdt)
         qemu_fdt_setprop_string(fdt, node, "dr_mode", "host");
         qemu_fdt_setprop_string(fdt, node, "phy_type", "ulpi");
     }
+
+    {
+        const char diu_compatible[] = "fsl,diu\0fsl,p1022-diu";
+        g_autofree char *node = g_strdup_printf("%s/display@%x", soc,
+                                                A1222_DIU_OFFSET);
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop(fdt, node, "compatible", diu_compatible,
+                         sizeof(diu_compatible));
+        qemu_fdt_setprop_cells(fdt, node, "reg", A1222_DIU_OFFSET, 0x1000);
+        qemu_fdt_setprop_cells(fdt, node, "interrupts", A1222_DIU_IRQ, 2);
+        qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+    }
+
+    {
+        g_autofree char *node = g_strdup_printf("%s/i2c@%x", soc,
+                                                A1222_I2C2_OFFSET);
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop_string(fdt, node, "compatible", "fsl-i2c");
+        qemu_fdt_setprop_cells(fdt, node, "reg", A1222_I2C2_OFFSET, 0x100);
+        qemu_fdt_setprop_cell(fdt, node, "cell-index", 1);
+        qemu_fdt_setprop_cells(fdt, node, "interrupts", A1222_I2C_IRQ, 2);
+        qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+        qemu_fdt_setprop_cell(fdt, node, "#address-cells", 1);
+        qemu_fdt_setprop_cell(fdt, node, "#size-cells", 0);
+        qemu_fdt_setprop(fdt, node, "dfsrr", NULL, 0);
+    }
 }
 
 static void a1222_init_sata(MachineState *machine)
@@ -155,6 +210,83 @@ static void a1222_init_usb(MachineState *machine)
     }
 }
 
+static void a1222_init_display(MachineState *machine)
+{
+    DeviceState *mpic = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "pic"));
+    SysBusDevice *ccsr = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "e500-ccsr"));
+    MemoryRegion *ccsr_space = sysbus_mmio_get_region(ccsr, 0);
+    SysBusDevice *i2c1 = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "i2c"));
+    DeviceState *dev, *irq_or, *gpio;
+    MemoryRegion *gpio_alias;
+    I2CSlave *ddc;
+    SysBusDevice *sbd;
+    I2CBus *i2c;
+
+    /* The display interface unit */
+    dev = qdev_new(TYPE_FSL_DIU);
+    sbd = SYS_BUS_DEVICE(dev);
+    object_property_add_child(OBJECT(machine), "diu", OBJECT(dev));
+    object_property_set_link(OBJECT(dev), "memory",
+                             OBJECT(get_system_memory()), &error_fatal);
+    /* A display card given with -device stays the primary display */
+    qdev_prop_set_bit(dev, "primary-console",
+                      vga_interface_type != VGA_DEVICE);
+    sysbus_realize_and_unref(sbd, &error_fatal);
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(mpic, A1222_DIU_IRQ));
+    memory_region_add_subregion(ccsr_space, A1222_DIU_OFFSET,
+                                sysbus_mmio_get_region(sbd, 0));
+
+    /* Both I2C controllers share an interrupt */
+    irq_or = qdev_new(TYPE_OR_IRQ);
+    object_property_add_child(OBJECT(machine), "i2c-irq-or", OBJECT(irq_or));
+    qdev_prop_set_uint16(irq_or, "num-lines", 2);
+    qdev_realize_and_unref(irq_or, NULL, &error_fatal);
+    qdev_connect_gpio_out(irq_or, 0, qdev_get_gpio_in(mpic, A1222_I2C_IRQ));
+    sysbus_connect_irq(i2c1, 0, qdev_get_gpio_in(irq_or, 0));
+
+    /* The second I2C controller, with the DVI transmitter */
+    dev = qdev_new("mpc-i2c");
+    sbd = SYS_BUS_DEVICE(dev);
+    object_property_add_child(OBJECT(machine), "i2c2", OBJECT(dev));
+    sysbus_realize_and_unref(sbd, &error_fatal);
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(irq_or, 1));
+    memory_region_add_subregion(ccsr_space, A1222_I2C2_OFFSET,
+                                sysbus_mmio_get_region(sbd, 0));
+
+    /*
+     * The DVI port's DDC, which software bit-bangs through two GPIO pins,
+     * with the monitor's EDID
+     */
+    gpio = qdev_new("mpc8xxx_gpio");
+    object_property_add_child(OBJECT(machine), "gpio3", OBJECT(gpio));
+    qdev_prop_set_uint32(gpio, "pullups",
+                         BIT(31 - A1222_DDC_SDA) | BIT(31 - A1222_DDC_SCL));
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(gpio), &error_fatal);
+    gpio_alias = g_new(MemoryRegion, 1);
+    memory_region_init_alias(gpio_alias, OBJECT(gpio), "gpio3",
+                             sysbus_mmio_get_region(SYS_BUS_DEVICE(gpio), 0),
+                             0, 0x100);
+    memory_region_add_subregion(ccsr_space, A1222_GPIO3_OFFSET, gpio_alias);
+
+    dev = qdev_new(TYPE_GPIO_I2C);
+    object_property_add_child(OBJECT(machine), "ddc", OBJECT(dev));
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    qdev_connect_gpio_out(gpio, A1222_DDC_SDA,
+                          qdev_get_gpio_in(dev, BITBANG_I2C_SDA));
+    qdev_connect_gpio_out(gpio, A1222_DDC_SCL,
+                          qdev_get_gpio_in(dev, BITBANG_I2C_SCL));
+    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in(gpio, A1222_DDC_SDA));
+    i2c = I2C_BUS(qdev_get_child_bus(dev, "i2c"));
+    ddc = i2c_slave_new(TYPE_I2CDDC, 0x50);
+    /* The AmigaOS recovery image's default Workbench mode */
+    qdev_prop_set_uint32(DEVICE(ddc), "xres", 1280);
+    qdev_prop_set_uint32(DEVICE(ddc), "yres", 768);
+    i2c_slave_realize_and_unref(ddc, i2c, &error_fatal);
+}
+
 /*
  * The DMA controllers, which the AmigaOS kernel hands out to its users
  * channel by channel: graphics.library copies its shadow of the DIU's frame
@@ -196,6 +328,7 @@ static void a1222_init(MachineState *machine)
     ppce500_init(machine);
     a1222_init_sata(machine);
     a1222_init_usb(machine);
+    a1222_init_display(machine);
     a1222_init_dma(machine);
 }
 

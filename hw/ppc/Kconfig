@@ -185,6 +185,11 @@ config A1222
     select FSL_SATA
     select USB_EHCI_SYSBUS
     select FSL_DMA
+    select FSL_DIU
+    select DDC
+    select OR_IRQ
+    select BITBANG_I2C
+    select GPIO_MPC8XXX
 
 config VIRTEX
     bool
