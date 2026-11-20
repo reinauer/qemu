@@ -1,0 +1,66 @@
+.. SPDX-License-Identifier: GPL-2.0-or-later
+
+AmigaOne A1222 (``a1222``)
+==========================
+
+The ``a1222`` machine emulates the AmigaOne A1222 (Tabor) board, which is
+built around a Freescale P1022 SoC with e500v2 cores, for running
+AmigaOS 4.1 Final Edition.  It is the generic e500 machine with the
+P1022's address map as U-Boot leaves it on the board, CCSR at
+``0xffe00000``, and the P1022's devices that AmigaOS uses.
+
+Emulated devices
+----------------
+
+ * e500v2 CPU (up to 2) with SPE, and up to 2 GiB of RAM
+ * MPIC interrupt controller and the DUART
+ * The first PCIe controller, for cards such as ``ati-vga``
+ * Two SATA controllers (``-drive if=ide,index=0`` and ``index=1``)
+ * Two USB (EHCI) controllers, ``usb-bus.0`` and ``usb-bus.1``, in the
+   order of their AmigaOS unit numbers
+ * The display interface unit (DIU), with the DVI port's DDC and a monitor
+   whose preferred mode is 1280x768
+ * Two DMA controllers
+ * The SSI with a WM8776 codec, which play and record through the
+   machine's ``audiodev``
+ * The MCP7940 real-time clock
+ * Two eTSEC Ethernet controllers with their MDIO blocks; the first one
+   takes the first ``-nic`` without a model
+ * The eSDHC, with an SD card from ``-drive if=sd``
+
+Booting AmigaOS
+---------------
+
+AmigaOS is not included.  Its kernel and modules boot from a boot loader
+that QEMU loads with ``-kernel``, such as BBoot with support for the
+A1222, which takes them as a zip archive of the Kickstart directory of
+an AmigaOS 4.1 installation for the A1222, given with ``-initrd``:
+
+.. code-block:: bash
+
+  $ qemu-system-ppc -M a1222,audiodev=snd0 -m 1G \
+        -kernel bboot -initrd Kickstart-a1222.zip -serial stdio \
+        -audiodev sdl,id=snd0 \
+        -drive file=a1222.img,format=raw,if=ide,index=0 \
+        -drive file=sd.img,format=raw,if=sd \
+        -nic user \
+        -device usb-hub,bus=usb-bus.0,port=1 \
+        -device usb-kbd,bus=usb-bus.0,port=1.1 \
+        -device usb-mouse,bus=usb-bus.0,port=1.2
+
+``-append "serial debuglevel=7"`` makes the kernel log to the serial
+port.
+
+The SD card
+-----------
+
+On the A1222, U-Boot keeps its environment on the SD card, and AmigaOS's
+``nonvolatile.library`` reads its variables from there:
+``A1222eth.device`` opens only when it finds the MAC address as
+``ethaddr``.  ``scripts/a1222-sd-env.py`` makes an SD card image with
+such an environment, by default with QEMU's MAC addresses for the first
+two network cards:
+
+.. code-block:: bash
+
+  $ scripts/a1222-sd-env.py sd.img

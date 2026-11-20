@@ -1624,6 +1624,8 @@ F: pc-bios/u-boot.e500
 F: hw/intc/openpic_kvm.c
 F: include/hw/ppc/openpic_kvm.h
 F: docs/system/ppc/ppce500.rst
+F: docs/system/ppc/a1222.rst
+F: scripts/a1222-sd-env.py
 F: tests/functional/ppc64/test_e500.py
 F: tests/functional/ppc/test_tuxrun.py
 
