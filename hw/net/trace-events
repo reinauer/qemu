@@ -18,6 +18,12 @@ etsec_write(uint64_t addr, const char *name, uint32_t value) "0x%03" PRIx64 " (%
 etsec_phy_read(unsigned int reg, uint16_t value) "reg %u -> 0x%04x"
 etsec_phy_write(unsigned int reg, uint16_t value) "reg %u <- 0x%04x"
 
+# fsl_etsec/mdio.c
+fsl_etsec_mdio_read(uint64_t addr, uint32_t value) "0x%03" PRIx64 " -> 0x%08x"
+fsl_etsec_mdio_write(uint64_t addr, uint64_t value) "0x%03" PRIx64 " <- 0x%08" PRIx64
+fsl_etsec_mdio_phy_read(unsigned int phy, unsigned int reg, uint16_t value) "phy %u reg %u -> 0x%04x"
+fsl_etsec_mdio_phy_write(unsigned int phy, unsigned int reg, uint16_t value) "phy %u reg %u <- 0x%04x"
+
 # lan9118_phy.c
 lan9118_phy_read(const char *path, uint16_t val, int reg) "%s: [0x%02x] -> 0x%04" PRIx16
 lan9118_phy_write(const char *path, uint16_t val, int reg) "%s: [0x%02x] <- 0x%04" PRIx16
