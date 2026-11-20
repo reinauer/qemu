@@ -61,3 +61,9 @@ virtio_snd_handle_event(void) "event queue callback called"
 virtio_snd_pcm_stream_flush(uint32_t stream) "flushing stream %"PRIu32
 virtio_snd_handle_tx_xfer(void) "tx queue callback called"
 virtio_snd_handle_rx_xfer(void) "rx queue callback called"
+# wm8776.c
+wm8776_write(uint8_t reg, uint16_t val) "R%u = 0x%03x"
+wm8776_rate(uint32_t freq) "DAC at %"PRIu32" Hz"
+wm8776_volume(bool mute, uint8_t left, uint8_t right) "mute %d, volume %u/%u"
+wm8776_adc(bool on, uint32_t freq) "ADC on %d at %"PRIu32" Hz"
+

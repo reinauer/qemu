@@ -47,6 +47,10 @@ config CS4231
 config ASC
     bool
 
+config WM8776
+    bool
+    depends on I2C
+
 config VIRTIO_SND
     bool
     default y

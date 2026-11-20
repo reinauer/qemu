@@ -1609,6 +1609,8 @@ F: hw/display/fsl-diu.c
 F: include/hw/display/fsl-diu.h
 F: hw/dma/fsl-dma.c
 F: include/hw/dma/fsl-dma.h
+F: hw/audio/wm8776.c
+F: include/hw/audio/wm8776.h
 F: hw/rtc/mcp7940.c
 F: include/hw/rtc/mcp7940.h
 F: hw/net/fsl_etsec/
