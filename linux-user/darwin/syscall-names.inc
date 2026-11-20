@@ -123,6 +123,50 @@ return "madvise";
 case TARGET_NR_msync:
 return "msync";
 #endif
+#ifdef TARGET_NR_getpid
+case TARGET_NR_getpid:
+return "getpid";
+#endif
+#ifdef TARGET_NR_getppid
+case TARGET_NR_getppid:
+return "getppid";
+#endif
+#ifdef TARGET_NR_getuid
+case TARGET_NR_getuid:
+return "getuid";
+#endif
+#ifdef TARGET_NR_geteuid
+case TARGET_NR_geteuid:
+return "geteuid";
+#endif
+#ifdef TARGET_NR_getgid
+case TARGET_NR_getgid:
+return "getgid";
+#endif
+#ifdef TARGET_NR_getegid
+case TARGET_NR_getegid:
+return "getegid";
+#endif
+#ifdef TARGET_NR_getpgrp
+case TARGET_NR_getpgrp:
+return "getpgrp";
+#endif
+#ifdef TARGET_NR_setsid
+case TARGET_NR_setsid:
+return "setsid";
+#endif
+#ifdef TARGET_NR_getpgid
+case TARGET_NR_getpgid:
+return "getpgid";
+#endif
+#ifdef TARGET_NR_getsid
+case TARGET_NR_getsid:
+return "getsid";
+#endif
+#ifdef TARGET_NR_setpgid
+case TARGET_NR_setpgid:
+return "setpgid";
+#endif
 #ifdef TARGET_NR_fsync
 case TARGET_NR_fsync:
 return "fsync";
@@ -283,9 +327,25 @@ return "sigaltstack";
 case TARGET_NR_kill:
 return "kill";
 #endif
+#ifdef TARGET_NR_fork
+case TARGET_NR_fork:
+return "fork";
+#endif
+#ifdef TARGET_NR_vfork
+case TARGET_NR_vfork:
+return "vfork";
+#endif
 #ifdef TARGET_NR_clone
 case TARGET_NR_clone:
 return "clone";
+#endif
+#ifdef TARGET_NR_execve
+case TARGET_NR_execve:
+return "execve";
+#endif
+#ifdef TARGET_NR_wait4
+case TARGET_NR_wait4:
+return "wait4";
 #endif
 #ifdef TARGET_NR_futex
 case TARGET_NR_futex:
@@ -302,6 +362,22 @@ return "tgkill";
 #ifdef TARGET_NR_tkill
 case TARGET_NR_tkill:
 return "tkill";
+#endif
+#ifdef TARGET_NR_getrlimit
+case TARGET_NR_getrlimit:
+return "getrlimit";
+#endif
+#ifdef TARGET_NR_prlimit64
+case TARGET_NR_prlimit64:
+return "prlimit64";
+#endif
+#ifdef TARGET_NR_prctl
+case TARGET_NR_prctl:
+return "prctl";
+#endif
+#ifdef TARGET_NR_getrusage
+case TARGET_NR_getrusage:
+return "getrusage";
 #endif
 
 

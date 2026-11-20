@@ -237,6 +237,61 @@ case TARGET_NR_msync: {
     return get_errno(msync(g2h_untagged(a1), a2, flags));
 }
 #endif
+#ifdef TARGET_NR_getpid
+case TARGET_NR_getpid: {
+    return get_errno(getpid());
+}
+#endif
+#ifdef TARGET_NR_getppid
+case TARGET_NR_getppid: {
+    return get_errno(getppid());
+}
+#endif
+#ifdef TARGET_NR_getuid
+case TARGET_NR_getuid: {
+    return get_errno(getuid());
+}
+#endif
+#ifdef TARGET_NR_geteuid
+case TARGET_NR_geteuid: {
+    return get_errno(geteuid());
+}
+#endif
+#ifdef TARGET_NR_getgid
+case TARGET_NR_getgid: {
+    return get_errno(getgid());
+}
+#endif
+#ifdef TARGET_NR_getegid
+case TARGET_NR_getegid: {
+    return get_errno(getegid());
+}
+#endif
+#ifdef TARGET_NR_getpgrp
+case TARGET_NR_getpgrp: {
+    return get_errno(getpgrp());
+}
+#endif
+#ifdef TARGET_NR_setsid
+case TARGET_NR_setsid: {
+    return get_errno(setsid());
+}
+#endif
+#ifdef TARGET_NR_getpgid
+case TARGET_NR_getpgid: {
+    return get_errno(getpgid(a1));
+}
+#endif
+#ifdef TARGET_NR_getsid
+case TARGET_NR_getsid: {
+    return get_errno(getsid(a1));
+}
+#endif
+#ifdef TARGET_NR_setpgid
+case TARGET_NR_setpgid: {
+    return get_errno(setpgid(a1, a2));
+}
+#endif
 #ifdef TARGET_NR_fsync
 case TARGET_NR_fsync: {
     return get_errno(fsync(a1));
@@ -670,9 +725,55 @@ case TARGET_NR_kill: {
     return get_errno(kill(a1, sig));
 }
 #endif
+#ifdef TARGET_NR_fork
+case TARGET_NR_fork: {
+    return get_errno(do_fork(env, TARGET_SIGCHLD, 0, 0, 0, 0));
+}
+#endif
+#ifdef TARGET_NR_vfork
+case TARGET_NR_vfork: {
+    return get_errno(do_fork(env, TARGET_SIGCHLD, 0, 0, 0, 0));
+}
+#endif
 #ifdef TARGET_NR_clone
 case TARGET_NR_clone: {
     return get_errno(do_fork(env, a1, a2, a3, a5, a4));
+}
+#endif
+#ifdef TARGET_NR_execve
+case TARGET_NR_execve: {
+    return guest_exec(a1, a2, a3);
+}
+#endif
+#ifdef TARGET_NR_wait4
+case TARGET_NR_wait4: {
+    int status;
+    struct rusage usage;
+    int options = 0;
+    if (a3 & 1) {
+        options |= WNOHANG;
+    }
+    if (a3 & 2) {
+        options |= WUNTRACED;
+    }
+    if (a3 & 8) {
+        options |= WCONTINUED;
+    }
+    ret = get_errno(wait4(a1, &status, options, &usage));
+    if (ret > 0 && a2 && put_user_u32(host_to_target_waitstatus(status), a2)) {
+        return -TARGET_EFAULT;
+    }
+    if (ret > 0 && a4) {
+        struct target_rusage out = {0};
+        out.ru_utime.tv_sec = tswapal(usage.ru_utime.tv_sec);
+        out.ru_utime.tv_usec = tswapal(usage.ru_utime.tv_usec);
+        out.ru_stime.tv_sec = tswapal(usage.ru_stime.tv_sec);
+        out.ru_stime.tv_usec = tswapal(usage.ru_stime.tv_usec);
+        if (copy_to_user(a4, &out, sizeof(out))) {
+            return -TARGET_EFAULT;
+        }
+    }
+    return ret;
 }
 #endif
 #ifdef TARGET_NR_futex
@@ -768,5 +869,41 @@ case TARGET_NR_tkill: {
     cpu_list_unlock();
     pthread_mutex_unlock(&clone_lock);
     return ret;
+}
+#endif
+#ifdef TARGET_NR_getrlimit
+case TARGET_NR_getrlimit: {
+    return guest_rlimit(a1, 0, a2);
+}
+#endif
+#ifdef TARGET_NR_prlimit64
+case TARGET_NR_prlimit64: {
+    if (a1 && a1 != getpid()) {
+        return -TARGET_ESRCH;
+    }
+    return guest_rlimit(a2, a3, a4);
+}
+#endif
+#ifdef TARGET_NR_prctl
+case TARGET_NR_prctl: {
+    if (a1 == 0x41555856) { /* PR_GET_AUXV */
+        size_t size = MIN((abi_ulong)a3, ts->info->auxv_len);
+        p = lock_user(VERIFY_READ, ts->info->saved_auxv, size, 1);
+        if (!p && size) {
+            return -TARGET_EFAULT;
+        }
+        ret = copy_to_user(a2, p, size) ? -TARGET_EFAULT : ts->info->auxv_len;
+        unlock_user(p, ts->info->saved_auxv, 0);
+        return ret;
+    }
+    if (a1 == 3) {
+        return 1;
+    } /* PR_GET_DUMPABLE */
+    return -TARGET_EINVAL;
+}
+#endif
+#ifdef TARGET_NR_getrusage
+case TARGET_NR_getrusage: {
+    return guest_rusage(a1, a2);
 }
 #endif

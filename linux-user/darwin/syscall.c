@@ -24,7 +24,10 @@
 #include "tcg/startup.h"
 #include "thread-abi.h"
 #include "gdbstub/syscalls.h"
+#include "elf.h"
+#include <mach-o/dyld.h>
 #include <sys/utsname.h>
+#include <sys/resource.h>
 #include <sys/ioctl.h>
 #include <sys/filio.h>
 #include <sys/ttycom.h>
@@ -190,6 +193,18 @@ void target_exception_dump(CPUArchState *env, const char *fmt, int code)
 
 void syscall_init(void)
 {
+}
+
+int host_to_target_waitstatus(int status)
+{
+    if (WIFSIGNALED(status)) {
+        return (status & ~0x7f) | host_to_target_signal(WTERMSIG(status));
+    }
+    if (WIFSTOPPED(status)) {
+        return (status & ~0xff00) |
+               (host_to_target_signal(WSTOPSIG(status)) << 8);
+    }
+    return status;
 }
 
 static abi_ulong target_brk, initial_target_brk;
@@ -704,6 +719,134 @@ static abi_long guest_sigmask(int how, abi_ulong set_addr, abi_ulong old_addr,
     return 0;
 }
 
+
+static abi_long guest_exec(abi_ulong name_addr, abi_ulong argv_addr,
+                           abi_ulong env_addr)
+{
+    g_autoptr(GPtrArray) args = g_ptr_array_new_with_free_func(g_free);
+    g_autoptr(GPtrArray) envs = g_ptr_array_new_with_free_func(g_free);
+    char *name = lock_user_string(name_addr);
+    g_autofree char *executable = NULL;
+    char self[PATH_MAX];
+    uint32_t self_size = sizeof(self);
+    unsigned char magic[256];
+    int fd, ret;
+    if (!name) {
+        return -TARGET_EFAULT;
+    }
+    executable = g_strdup(path(name));
+    unlock_user(name, name_addr, 0);
+    for (int list = 0; list < 2; list++) {
+        abi_ulong at = list ? env_addr : argv_addr;
+        GPtrArray *array = list ? envs : args;
+        for (unsigned i = 0; at; i++, at += sizeof(abi_ulong)) {
+            abi_ulong ptr;
+            char *str;
+            if (i >= 131072) {
+                return -TARGET_E2BIG;
+            }
+            if (get_user_ual(ptr, at)) {
+                return -TARGET_EFAULT;
+            }
+            if (!ptr) {
+                break;
+            }
+            str = lock_user_string(ptr);
+            if (!str) {
+                return -TARGET_EFAULT;
+            }
+            g_ptr_array_add(array, g_strdup(str));
+            unlock_user(str, ptr, 0);
+        }
+    }
+    g_ptr_array_add(envs, NULL);
+    if (access(executable, X_OK)) {
+        return get_errno(-1);
+    }
+    fd = open(executable, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return get_errno(-1);
+    }
+    ret = read(fd, magic, sizeof(magic));
+    close(fd);
+    if (ret >= 2 && magic[0] == '#' && magic[1] == '!') {
+        char *line = (char *)magic + 2;
+        char *end = memchr(magic, '\n', ret);
+        if (!end) {
+            if (ret == sizeof(magic)) {
+                return -TARGET_ENOEXEC;
+            }
+            end = (char *)magic + ret;
+        }
+        *end = 0;
+        while (end > line && (end[-1] == ' ' || end[-1] == '\t')) {
+            *--end = 0;
+        }
+        while (*line == ' ' || *line == '\t') {
+            line++;
+        }
+        char *opt = line;
+        while (*opt && *opt != ' ' && *opt != '\t') {
+            opt++;
+        }
+        if (*opt) {
+            *opt++ = 0;
+        }
+        while (*opt == ' ' || *opt == '\t') {
+            opt++;
+        }
+        if (!*line) {
+            return -TARGET_ENOEXEC;
+        }
+        if (args->len) {
+            g_ptr_array_remove_index(args, 0);
+        }
+        g_ptr_array_insert(args, 0, g_strdup(executable));
+        if (*opt) {
+            g_ptr_array_insert(args, 0, g_strdup(opt));
+        }
+        g_ptr_array_insert(args, 0, g_strdup(line));
+        char *interpreter = g_strdup(path(line));
+        g_free(executable);
+        executable = interpreter;
+        if (access(executable, X_OK)) {
+            return get_errno(-1);
+        }
+        fd = open(executable, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            return get_errno(-1);
+        }
+        ret = read(fd, magic, sizeof(magic));
+        close(fd);
+    }
+    if (ret >= 4 && !memcmp(magic, ELFMAG, 4)) {
+        if (_NSGetExecutablePath(self, &self_size)) {
+            return -TARGET_ENAMETOOLONG;
+        }
+        /* Preserve argv[0] while recursively entering the same guest ABI. */
+        char *argv0 =
+            args->len ? g_strdup(args->pdata[0]) : g_strdup(executable);
+        if (args->len) {
+            g_ptr_array_remove_index(args, 0);
+        }
+        g_ptr_array_insert(args, 0, g_strdup(executable));
+        g_ptr_array_insert(args, 0, argv0);
+        g_ptr_array_insert(args, 0, g_strdup("-0"));
+        if (qemu_loglevel_mask(LOG_STRACE)) {
+            g_ptr_array_insert(args, 0, g_strdup("-strace"));
+        }
+        g_ptr_array_insert(args, 0, g_strdup(interp_prefix));
+        g_ptr_array_insert(args, 0, g_strdup("-L"));
+        g_ptr_array_insert(args, 0, g_strdup(self));
+        g_ptr_array_add(args, NULL);
+        execve(self, (char **)args->pdata, (char **)envs->pdata);
+    } else {
+        g_ptr_array_add(args, NULL);
+        execve(executable, (char **)args->pdata, (char **)envs->pdata);
+    }
+    return get_errno(-1);
+}
+
 #include "futex.c.inc"
 #include "thread.c.inc"
 
@@ -763,6 +906,80 @@ static abi_long guest_fcntl(int fd, int cmd, abi_long arg)
     default:
         return -TARGET_EINVAL;
     }
+}
+
+static abi_long guest_rlimit(int resource, abi_ulong new_addr,
+                             abi_ulong old_addr)
+{
+    static const int map[] = {
+        RLIMIT_CPU, RLIMIT_FSIZE, RLIMIT_DATA,   RLIMIT_STACK,   RLIMIT_CORE,
+        RLIMIT_RSS, RLIMIT_NPROC, RLIMIT_NOFILE, RLIMIT_MEMLOCK, RLIMIT_AS};
+    struct rlimit limit;
+    uint64_t target[2];
+    if ((unsigned)resource >= ARRAY_SIZE(map)) {
+        return -TARGET_EINVAL;
+    }
+    if (getrlimit(map[resource], &limit)) {
+        return get_errno(-1);
+    }
+    if (old_addr) {
+        target[0] = tswap64(limit.rlim_cur == RLIM_INFINITY ? UINT64_MAX
+                                                            : limit.rlim_cur);
+        target[1] = tswap64(limit.rlim_max == RLIM_INFINITY ? UINT64_MAX
+                                                            : limit.rlim_max);
+        if (copy_to_user(old_addr, target, sizeof(target))) {
+            return -TARGET_EFAULT;
+        }
+    }
+    if (new_addr) {
+        if (copy_from_user(target, new_addr, sizeof(target))) {
+            return -TARGET_EFAULT;
+        }
+        limit.rlim_cur = tswap64(target[0]);
+        limit.rlim_max = tswap64(target[1]);
+        if (limit.rlim_cur == UINT64_MAX) {
+            limit.rlim_cur = RLIM_INFINITY;
+        }
+        if (limit.rlim_max == UINT64_MAX) {
+            limit.rlim_max = RLIM_INFINITY;
+        }
+        return get_errno(setrlimit(map[resource], &limit));
+    }
+    return 0;
+}
+
+static abi_long guest_rusage(int who, abi_ulong addr)
+{
+    struct rusage usage;
+    struct target_rusage out = {0};
+    int host = who == 0 ? RUSAGE_SELF : who == -1 ? RUSAGE_CHILDREN : -99;
+    if (host == -99) {
+        return -TARGET_EINVAL;
+    }
+    if (getrusage(host, &usage)) {
+        return get_errno(-1);
+    }
+    out.ru_utime.tv_sec = tswapal(usage.ru_utime.tv_sec);
+    out.ru_utime.tv_usec = tswapal(usage.ru_utime.tv_usec);
+    out.ru_stime.tv_sec = tswapal(usage.ru_stime.tv_sec);
+    out.ru_stime.tv_usec = tswapal(usage.ru_stime.tv_usec);
+#define COPY_RUSAGE(field) out.field = tswapal(usage.field)
+    out.ru_maxrss = tswapal(usage.ru_maxrss / 1024);
+    COPY_RUSAGE(ru_ixrss);
+    COPY_RUSAGE(ru_idrss);
+    COPY_RUSAGE(ru_isrss);
+    COPY_RUSAGE(ru_minflt);
+    COPY_RUSAGE(ru_majflt);
+    COPY_RUSAGE(ru_nswap);
+    COPY_RUSAGE(ru_inblock);
+    COPY_RUSAGE(ru_oublock);
+    COPY_RUSAGE(ru_msgsnd);
+    COPY_RUSAGE(ru_msgrcv);
+    COPY_RUSAGE(ru_nsignals);
+    COPY_RUSAGE(ru_nvcsw);
+    COPY_RUSAGE(ru_nivcsw);
+#undef COPY_RUSAGE
+    return copy_to_user(addr, &out, sizeof(out)) ? -TARGET_EFAULT : 0;
 }
 
 static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
