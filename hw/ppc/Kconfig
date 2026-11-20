@@ -191,6 +191,8 @@ config A1222
     select BITBANG_I2C
     select GPIO_MPC8XXX
     select MCP7940
+    select FSL_SSI
+    select WM8776
 
 config VIRTEX
     bool

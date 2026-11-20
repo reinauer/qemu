@@ -18,6 +18,8 @@
 #include "hw/core/or-irq.h"
 #include "hw/core/qdev-properties.h"
 #include "hw/core/sysbus.h"
+#include "hw/audio/fsl-ssi.h"
+#include "hw/audio/wm8776.h"
 #include "hw/display/fsl-diu.h"
 #include "hw/dma/fsl-dma.h"
 #include "hw/display/i2c-ddc.h"
@@ -97,6 +99,20 @@ static const struct {
     { "dma2", 0x0c100, 76 },
 };
 
+/*
+ * The SSI, whose transmit and receive DMA requests go to the first DMA
+ * controller's channels 0 and 1, as the AmigaOS driver sets up the
+ * P1022's DMA request multiplexing (and fsl,playback-dma says in Linux),
+ * and its WM8776 codec on the second I2C bus, with a 12.288 MHz master
+ * clock
+ */
+#define A1222_SSI_OFFSET    0x15000
+#define A1222_SSI_IRQ       75
+#define A1222_SSI_DMA_TX    0
+#define A1222_SSI_DMA_RX    1
+#define A1222_CODEC_ADDR    0x1a
+#define A1222_CODEC_MCLK    12288000
+
 static void a1222_fixup_devtree(void *fdt)
 {
     const char model[] = "AmigaOne A1222";
@@ -166,6 +182,32 @@ static void a1222_fixup_devtree(void *fdt)
         qemu_fdt_setprop_cell(fdt, node, "#address-cells", 1);
         qemu_fdt_setprop_cell(fdt, node, "#size-cells", 0);
         qemu_fdt_setprop(fdt, node, "dfsrr", NULL, 0);
+    }
+
+    {
+        g_autofree char *i2c = g_strdup_printf("%s/i2c@%x", soc,
+                                               A1222_I2C2_OFFSET);
+        g_autofree char *codec = g_strdup_printf("%s/codec@%x", i2c,
+                                                 A1222_CODEC_ADDR);
+        g_autofree char *node = g_strdup_printf("%s/ssi@%x", soc,
+                                                A1222_SSI_OFFSET);
+
+        qemu_fdt_add_subnode(fdt, codec);
+        qemu_fdt_setprop_string(fdt, codec, "compatible", "wlf,wm8776");
+        qemu_fdt_setprop_cell(fdt, codec, "reg", A1222_CODEC_ADDR);
+        qemu_fdt_setprop_cell(fdt, codec, "clock-frequency",
+                              A1222_CODEC_MCLK);
+        qemu_fdt_setprop_cell(fdt, codec, "phandle",
+                              qemu_fdt_alloc_phandle(fdt));
+
+        qemu_fdt_add_subnode(fdt, node);
+        qemu_fdt_setprop_string(fdt, node, "compatible", "fsl,mpc8610-ssi");
+        qemu_fdt_setprop_cell(fdt, node, "cell-index", 0);
+        qemu_fdt_setprop_cells(fdt, node, "reg", A1222_SSI_OFFSET, 0x100);
+        qemu_fdt_setprop_cells(fdt, node, "interrupts", A1222_SSI_IRQ, 2);
+        qemu_fdt_setprop_phandle(fdt, node, "interrupt-parent", mpic);
+        qemu_fdt_setprop_string(fdt, node, "fsl,mode", "i2s-slave");
+        qemu_fdt_setprop_phandle(fdt, node, "codec-handle", codec);
     }
 
     {
@@ -334,6 +376,49 @@ static void a1222_init_dma(MachineState *machine)
     }
 }
 
+/*
+ * The SSI and its codec, which play what DMA channel 0 feeds the SSI, and
+ * record what channel 1 takes from it
+ */
+static void a1222_init_audio(MachineState *machine)
+{
+    DeviceState *mpic = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "pic"));
+    SysBusDevice *ccsr = SYS_BUS_DEVICE(
+        object_resolve_path_component(OBJECT(machine), "e500-ccsr"));
+    DeviceState *dma = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                            "dma"));
+    DeviceState *i2c2 = DEVICE(object_resolve_path_component(OBJECT(machine),
+                                                             "i2c2"));
+    I2CSlave *codec = i2c_slave_new(TYPE_WM8776, A1222_CODEC_ADDR);
+    DeviceState *dev = qdev_new(TYPE_FSL_SSI);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    object_property_add_child(OBJECT(machine), "codec", OBJECT(codec));
+    if (machine->audiodev) {
+        qdev_prop_set_string(DEVICE(codec), "audiodev", machine->audiodev);
+    }
+    qdev_prop_set_uint32(DEVICE(codec), "mclk-freq", A1222_CODEC_MCLK);
+    i2c_slave_realize_and_unref(codec,
+                                I2C_BUS(qdev_get_child_bus(i2c2, "i2c")),
+                                &error_fatal);
+
+    object_property_add_child(OBJECT(machine), "ssi", OBJECT(dev));
+    object_property_set_link(OBJECT(dev), "codec", OBJECT(codec),
+                             &error_fatal);
+    sysbus_realize_and_unref(sbd, &error_fatal);
+    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(mpic, A1222_SSI_IRQ));
+    qdev_connect_gpio_out_named(dev, FSL_SSI_DREQ, FSL_SSI_DREQ_TX,
+                                qdev_get_gpio_in_named(dma, FSL_DMA_DREQ,
+                                                       A1222_SSI_DMA_TX));
+    qdev_connect_gpio_out_named(dev, FSL_SSI_DREQ, FSL_SSI_DREQ_RX,
+                                qdev_get_gpio_in_named(dma, FSL_DMA_DREQ,
+                                                       A1222_SSI_DMA_RX));
+    memory_region_add_subregion(sysbus_mmio_get_region(ccsr, 0),
+                                A1222_SSI_OFFSET,
+                                sysbus_mmio_get_region(sbd, 0));
+}
+
 static void a1222_init(MachineState *machine)
 {
     if (machine->ram_size > 2 * GiB) {
@@ -346,6 +431,7 @@ static void a1222_init(MachineState *machine)
     a1222_init_usb(machine);
     a1222_init_display(machine);
     a1222_init_dma(machine);
+    a1222_init_audio(machine);
 }
 
 static void a1222_machine_class_init(ObjectClass *oc, const void *data)
@@ -391,6 +477,7 @@ static void a1222_machine_class_init(ObjectClass *oc, const void *data)
     mc->default_nic = "virtio-net-pci";
     mc->block_default_type = IF_IDE;
     mc->units_per_default_bus = 1;
+    machine_add_audiodev_property(mc);
 }
 
 #define TYPE_A1222_MACHINE  MACHINE_TYPE_NAME("a1222")
