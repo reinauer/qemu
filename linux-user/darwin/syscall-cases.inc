@@ -625,6 +625,35 @@ case TARGET_NR_getrandom: {
     return a2;
 }
 #endif
+#ifdef TARGET_NR_rt_sigaction
+case TARGET_NR_rt_sigaction: {
+    return guest_sigaction(a1, a2, a3, a4);
+}
+#endif
+#ifdef TARGET_NR_rt_sigprocmask
+case TARGET_NR_rt_sigprocmask: {
+    return guest_sigmask(a1, a2, a3, a4);
+}
+#endif
+#ifdef TARGET_NR_rt_sigreturn
+case TARGET_NR_rt_sigreturn: {
+    return do_rt_sigreturn(env);
+}
+#endif
+#ifdef TARGET_NR_sigaltstack
+case TARGET_NR_sigaltstack: {
+    return do_sigaltstack(a1, a2, env);
+}
+#endif
+#ifdef TARGET_NR_kill
+case TARGET_NR_kill: {
+    int sig = target_to_host_signal(a2);
+    if (sig < 0 || sig >= NSIG) {
+        return -TARGET_EINVAL;
+    }
+    return get_errno(kill(a1, sig));
+}
+#endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl: {
     if (a2 == TARGET_TIOCGWINSZ || a2 == TARGET_TIOCSWINSZ) {

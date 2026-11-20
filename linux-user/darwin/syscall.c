@@ -631,6 +631,74 @@ static abi_long get_timespec(struct timespec *ts, abi_ulong addr)
     return 0;
 }
 
+static abi_long guest_sigaction(int sig, abi_ulong act_addr, abi_ulong old_addr,
+                                size_t size)
+{
+    struct target_sigaction *act = NULL, *old = NULL;
+    abi_long ret;
+    if (size != sizeof(target_sigset_t)) {
+        return -TARGET_EINVAL;
+    }
+    if (act_addr) {
+        act = lock_user(VERIFY_READ, act_addr, sizeof(*act), 1);
+        if (!act) {
+            return -TARGET_EFAULT;
+        }
+    }
+    if (old_addr) {
+        old = lock_user(VERIFY_WRITE, old_addr, sizeof(*old), 0);
+        if (!old) {
+            unlock_user(act, act_addr, 0);
+            return -TARGET_EFAULT;
+        }
+    }
+    ret = do_sigaction(sig, act, old, 0);
+    unlock_user(act, act_addr, 0);
+    unlock_user(old, old_addr, ret == 0 ? sizeof(*old) : 0);
+    return ret;
+}
+
+static abi_long guest_sigmask(int how, abi_ulong set_addr, abi_ulong old_addr,
+                              size_t size)
+{
+    target_sigset_t target;
+    sigset_t set, old;
+    int ret;
+    if (size != sizeof(target)) {
+        return -TARGET_EINVAL;
+    }
+    if (set_addr) {
+        if (copy_from_user(&target, set_addr, size)) {
+            return -TARGET_EFAULT;
+        }
+        target_to_host_sigset(&set, &target);
+    }
+    switch (how) {
+    case TARGET_SIG_BLOCK:
+        how = SIG_BLOCK;
+        break;
+    case TARGET_SIG_UNBLOCK:
+        how = SIG_UNBLOCK;
+        break;
+    case TARGET_SIG_SETMASK:
+        how = SIG_SETMASK;
+        break;
+    default:
+        return -TARGET_EINVAL;
+    }
+    ret = do_sigprocmask(how, set_addr ? &set : NULL, &old);
+    if (ret) {
+        return get_errno(ret);
+    }
+    if (old_addr) {
+        host_to_target_sigset(&target, &old);
+        if (copy_to_user(old_addr, &target, size)) {
+            return -TARGET_EFAULT;
+        }
+    }
+    return 0;
+}
+
 #include "thread.c.inc"
 
 static abi_long guest_exit(CPUArchState *env, int code)

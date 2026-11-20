@@ -251,6 +251,26 @@ return "clock_nanosleep";
 case TARGET_NR_getrandom:
 return "getrandom";
 #endif
+#ifdef TARGET_NR_rt_sigaction
+case TARGET_NR_rt_sigaction:
+return "rt_sigaction";
+#endif
+#ifdef TARGET_NR_rt_sigprocmask
+case TARGET_NR_rt_sigprocmask:
+return "rt_sigprocmask";
+#endif
+#ifdef TARGET_NR_rt_sigreturn
+case TARGET_NR_rt_sigreturn:
+return "rt_sigreturn";
+#endif
+#ifdef TARGET_NR_sigaltstack
+case TARGET_NR_sigaltstack:
+return "sigaltstack";
+#endif
+#ifdef TARGET_NR_kill
+case TARGET_NR_kill:
+return "kill";
+#endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl:
 return "ioctl";
