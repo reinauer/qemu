@@ -25,9 +25,18 @@
 #include <sys/ttycom.h>
 #include <sys/uio.h>
 #include <sys/mount.h>
+#include <dirent.h>
 #include <termios.h>
 
 #define TARGET_AT_FDCWD -100
+#define TARGET_AT_SYMLINK_NOFOLLOW 0x100
+#define TARGET_AT_NO_AUTOMOUNT 0x800
+#define TARGET_AT_REMOVEDIR 0x200
+#define TARGET_AT_EACCESS 0x200
+#define TARGET_AT_EMPTY_PATH 0x1000
+#define TARGET_AT_STATX_SYNC_TYPE 0x6000
+
+#include "host-compat.h"
 
 TargetFdTrans **target_fd_trans;
 QemuMutex target_fd_trans_lock;
@@ -365,6 +374,108 @@ static abi_long guest_io(int fd, abi_ulong addr, abi_ulong count, bool writing,
     return ret;
 }
 
+static abi_long guest_host_stat(int fd, abi_ulong name_addr, int flags,
+                                struct stat *st)
+{
+    if (!name_addr && flags != -1) {
+        return -TARGET_EFAULT;
+    }
+    char *name = NULL;
+    int ret;
+    if (name_addr) {
+        name = lock_user_string(name_addr);
+        if (!name) {
+            return -TARGET_EFAULT;
+        }
+        if (!*name && (flags & TARGET_AT_EMPTY_PATH)) {
+            ret = fstat(fd, st);
+        } else {
+            ret = fstatat(
+                host_dirfd(fd), path(name), st,
+                flags & TARGET_AT_SYMLINK_NOFOLLOW ? AT_SYMLINK_NOFOLLOW : 0);
+        }
+        unlock_user(name, name_addr, 0);
+    } else {
+        ret = fstat(fd, st);
+    }
+    return get_errno(ret);
+}
+
+static uint64_t guest_device(dev_t device)
+{
+    uint64_t maj = major(device), min = minor(device);
+    return ((maj & 0xfff) << 8) | ((maj & ~0xfffULL) << 32) |
+           (min & 0xff) | ((min & ~0xffULL) << 12);
+}
+
+static abi_long guest_stat(int fd, abi_ulong name_addr, abi_ulong out,
+                           int flags)
+{
+    struct stat st;
+    struct target_stat dst = {0};
+    abi_long ret = guest_host_stat(fd, name_addr, flags, &st);
+    if (ret < 0) {
+        return ret;
+    }
+    dst.st_nlink = tswapal(st.st_nlink);
+    dst.st_mode = tswap32(st.st_mode);
+    dst.st_uid = tswap32(st.st_uid);
+    dst.st_gid = tswap32(st.st_gid);
+    dst.st_dev = tswapal(guest_device(st.st_dev));
+    dst.st_rdev = tswapal(guest_device(st.st_rdev));
+    dst.st_ino = tswapal(st.st_ino);
+    dst.st_size = tswapal(st.st_size);
+    dst.st_blksize = tswapal(st.st_blksize);
+    dst.st_blocks = tswapal(st.st_blocks);
+    dst.target_st_atime = tswapal(st.st_atimespec.tv_sec);
+    dst.target_st_atime_nsec = tswapal(st.st_atimespec.tv_nsec);
+    dst.target_st_mtime = tswapal(st.st_mtimespec.tv_sec);
+    dst.target_st_mtime_nsec = tswapal(st.st_mtimespec.tv_nsec);
+    dst.target_st_ctime = tswapal(st.st_ctimespec.tv_sec);
+    dst.target_st_ctime_nsec = tswapal(st.st_ctimespec.tv_nsec);
+    return copy_to_user(out, &dst, sizeof(dst)) ? -TARGET_EFAULT : 0;
+}
+
+static abi_long guest_statx(int fd, abi_ulong name, int flags,
+                           unsigned mask, abi_ulong addr)
+{
+    struct stat st;
+    struct target_statx out = {0};
+    abi_long ret;
+    if ((flags & ~(TARGET_AT_SYMLINK_NOFOLLOW | TARGET_AT_EMPTY_PATH |
+                   TARGET_AT_NO_AUTOMOUNT | TARGET_AT_STATX_SYNC_TYPE)) ||
+        (flags & TARGET_AT_STATX_SYNC_TYPE) == TARGET_AT_STATX_SYNC_TYPE ||
+        (mask & 0x80000000)) {
+        return -TARGET_EINVAL;
+    }
+    ret = guest_host_stat(fd, name, flags, &st);
+    if (ret) {
+        return ret;
+    }
+    out.stx_mask = tswap32(0xfff); /* BASIC_STATS and BTIME */
+    out.stx_blksize = tswap32(st.st_blksize);
+    out.stx_nlink = tswap32(st.st_nlink);
+    out.stx_uid = tswap32(st.st_uid);
+    out.stx_gid = tswap32(st.st_gid);
+    out.stx_mode = tswap16(st.st_mode);
+    out.stx_ino = tswap64(st.st_ino);
+    out.stx_size = tswap64(st.st_size);
+    out.stx_blocks = tswap64(st.st_blocks);
+#define COPY_STATX_TIME(field, host) \
+    out.field.tv_sec = tswap64(st.host.tv_sec); \
+    out.field.tv_nsec = tswap32(st.host.tv_nsec)
+    COPY_STATX_TIME(stx_atime, st_atimespec);
+    COPY_STATX_TIME(stx_btime, st_birthtimespec);
+    COPY_STATX_TIME(stx_ctime, st_ctimespec);
+    COPY_STATX_TIME(stx_mtime, st_mtimespec);
+#undef COPY_STATX_TIME
+    out.stx_rdev_major = tswap32(major(st.st_rdev));
+    out.stx_rdev_minor = tswap32(minor(st.st_rdev));
+    out.stx_dev_major = tswap32(major(st.st_dev));
+    out.stx_dev_minor = tswap32(minor(st.st_dev));
+    return copy_to_user(addr, &out, sizeof(out)) ? -TARGET_EFAULT : 0;
+}
+
 static abi_long guest_iov(int fd, abi_ulong addr, int count, bool writing)
 {
     struct target_iovec *target;
@@ -436,6 +547,48 @@ done:;
     return ret;
 }
 
+static abi_long guest_getdents(int fd, abi_ulong addr, unsigned count)
+{
+    g_autofree char *host = NULL;
+    char *out;
+    off_t base;
+    ssize_t bytes;
+    unsigned used = 0;
+    if (count < 24) {
+        return -TARGET_EINVAL;
+    }
+    count = MIN(count, 1024 * 1024);
+    host = g_malloc(count);
+    out = lock_user(VERIFY_WRITE, addr, count, 0);
+    if (!out) {
+        return -TARGET_EFAULT;
+    }
+    bytes = __getdirentries64(fd, host, count, &base);
+    if (bytes < 0) {
+        unlock_user(out, addr, 0);
+        return get_errno(-1);
+    }
+    for (ssize_t off = 0; off < bytes;) {
+        struct dirent *de = (struct dirent *)(host + off);
+        unsigned n = strlen(de->d_name) + 1;
+        unsigned len = ROUND_UP(19 + n, 8);
+        if (!de->d_reclen || off + de->d_reclen > bytes || used + len > count) {
+            unlock_user(out, addr, 0);
+            return -TARGET_EIO;
+        }
+        memset(out + used, 0, len);
+        stq_p(out + used, tswap64(de->d_ino));
+        stq_p(out + used + 8, tswap64(de->d_seekoff));
+        stw_p(out + used + 16, tswap16(len));
+        out[used + 18] = de->d_type;
+        memcpy(out + used + 19, de->d_name, n);
+        used += len;
+        off += de->d_reclen;
+    }
+    unlock_user(out, addr, used);
+    return used;
+}
+
 #include "thread.c.inc"
 
 static abi_long guest_exit(CPUArchState *env, int code)
@@ -483,6 +636,7 @@ static abi_long guest_syscall(CPUArchState *env, int num, abi_long a1,
                               abi_long a2, abi_long a3, abi_long a4,
                               abi_long a5, abi_long a6)
 {
+    void *p;
     abi_long ret;
     switch (num) {
 #include "syscall-cases.inc"

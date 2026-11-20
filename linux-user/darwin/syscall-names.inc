@@ -71,6 +71,30 @@ return "pipe";
 case TARGET_NR_pipe2:
 return "pipe2";
 #endif
+#ifdef TARGET_NR_fstat
+case TARGET_NR_fstat:
+return "fstat";
+#endif
+#ifdef TARGET_NR_newfstatat
+case TARGET_NR_newfstatat:
+return "newfstatat";
+#endif
+#ifdef TARGET_NR_fstatat64
+case TARGET_NR_fstatat64:
+return "fstatat64";
+#endif
+#ifdef TARGET_NR_stat
+case TARGET_NR_stat:
+return "stat";
+#endif
+#ifdef TARGET_NR_lstat
+case TARGET_NR_lstat:
+return "lstat";
+#endif
+#ifdef TARGET_NR_getdents64
+case TARGET_NR_getdents64:
+return "getdents64";
+#endif
 #ifdef TARGET_NR_brk
 case TARGET_NR_brk:
 return "brk";
@@ -111,6 +135,22 @@ return "fdatasync";
 case TARGET_NR_ftruncate:
 return "ftruncate";
 #endif
+#ifdef TARGET_NR_fchmod
+case TARGET_NR_fchmod:
+return "fchmod";
+#endif
+#ifdef TARGET_NR_fchown
+case TARGET_NR_fchown:
+return "fchown";
+#endif
+#ifdef TARGET_NR_fchdir
+case TARGET_NR_fchdir:
+return "fchdir";
+#endif
+#ifdef TARGET_NR_umask
+case TARGET_NR_umask:
+return "umask";
+#endif
 #ifdef TARGET_NR_arch_prctl
 case TARGET_NR_arch_prctl:
 return "arch_prctl";
@@ -118,6 +158,70 @@ return "arch_prctl";
 #ifdef TARGET_NR_uname
 case TARGET_NR_uname:
 return "uname";
+#endif
+#ifdef TARGET_NR_getcwd
+case TARGET_NR_getcwd:
+return "getcwd";
+#endif
+#ifdef TARGET_NR_chdir
+case TARGET_NR_chdir:
+return "chdir";
+#endif
+#ifdef TARGET_NR_unlink
+case TARGET_NR_unlink:
+return "unlink";
+#endif
+#ifdef TARGET_NR_mkdir
+case TARGET_NR_mkdir:
+return "mkdir";
+#endif
+#ifdef TARGET_NR_rmdir
+case TARGET_NR_rmdir:
+return "rmdir";
+#endif
+#ifdef TARGET_NR_chmod
+case TARGET_NR_chmod:
+return "chmod";
+#endif
+#ifdef TARGET_NR_chown
+case TARGET_NR_chown:
+return "chown";
+#endif
+#ifdef TARGET_NR_lchown
+case TARGET_NR_lchown:
+return "lchown";
+#endif
+#ifdef TARGET_NR_access
+case TARGET_NR_access:
+return "access";
+#endif
+#ifdef TARGET_NR_truncate
+case TARGET_NR_truncate:
+return "truncate";
+#endif
+#ifdef TARGET_NR_faccessat
+case TARGET_NR_faccessat:
+return "faccessat";
+#endif
+#ifdef TARGET_NR_faccessat2
+case TARGET_NR_faccessat2:
+return "faccessat2";
+#endif
+#ifdef TARGET_NR_unlinkat
+case TARGET_NR_unlinkat:
+return "unlinkat";
+#endif
+#ifdef TARGET_NR_mkdirat
+case TARGET_NR_mkdirat:
+return "mkdirat";
+#endif
+#ifdef TARGET_NR_readlink
+case TARGET_NR_readlink:
+return "readlink";
+#endif
+#ifdef TARGET_NR_readlinkat
+case TARGET_NR_readlinkat:
+return "readlinkat";
 #endif
 #ifdef TARGET_NR_ioctl
 case TARGET_NR_ioctl:
@@ -130,3 +234,7 @@ return "ioctl";
 
 
 
+#ifdef TARGET_NR_statx
+case TARGET_NR_statx:
+return "statx";
+#endif
