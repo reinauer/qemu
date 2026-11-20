@@ -185,12 +185,13 @@ int block_signals(void)
     TaskState *ts = get_task_state(thread_cpu);
     sigset_t set;
 
-    /* It's OK to block everything including SIGSEGV, because we won't
+    /* Use pthread_sigmask: Darwin's sigprocmask changes all host threads.
+     * It's OK to block everything including SIGSEGV, because we won't
      * run any further guest code before unblocking signals in
      * process_pending_signals().
      */
     sigfillset(&set);
-    sigprocmask(SIG_SETMASK, &set, 0);
+    pthread_sigmask(SIG_SETMASK, &set, 0);
 
     return qatomic_xchg(&ts->signal_pending, 1);
 }
@@ -662,7 +663,7 @@ void signal_init(const char *rtsig_map)
     signal_table_init(rtsig_map);
 
     /* Set the signal mask from the host mask. */
-    sigprocmask(0, 0, &ts->signal_mask);
+    pthread_sigmask(0, 0, &ts->signal_mask);
 
     sigfillset(&act.sa_mask);
     act.sa_flags = SA_SIGINFO;
@@ -1005,7 +1006,7 @@ static void host_sigsegv_handler(CPUState *cpu, siginfo_t *info,
         }
     }
 
-    sigprocmask(SIG_SETMASK, host_signal_mask(uc), NULL);
+    pthread_sigmask(SIG_SETMASK, host_signal_mask(uc), NULL);
     cpu_loop_exit_sigsegv(cpu, guest_addr, access_type, maperr, pc);
 }
 
@@ -1028,7 +1029,7 @@ static uintptr_t host_sigbus_handler(CPUState *cpu, siginfo_t *info,
         uintptr_t host_addr = (uintptr_t)info->si_addr;
         abi_ptr guest_addr = h2g_nocheck(host_addr);
 
-        sigprocmask(SIG_SETMASK, host_signal_mask(uc), NULL);
+        pthread_sigmask(SIG_SETMASK, host_signal_mask(uc), NULL);
         cpu_loop_exit_sigbus(cpu, guest_addr, access_type, pc);
     }
     return pc;
@@ -1364,7 +1365,7 @@ void process_pending_signals(CPUArchState *cpu_env)
 
     while (qatomic_read(&ts->signal_pending)) {
         sigfillset(&set);
-        sigprocmask(SIG_SETMASK, &set, 0);
+        pthread_sigmask(SIG_SETMASK, &set, 0);
 
     restart_scan:
         sig = ts->sync_signal.pending;
@@ -1413,7 +1414,7 @@ void process_pending_signals(CPUArchState *cpu_env)
         set = ts->signal_mask;
         sigdelset(&set, SIGSEGV);
         sigdelset(&set, SIGBUS);
-        sigprocmask(SIG_SETMASK, &set, 0);
+        pthread_sigmask(SIG_SETMASK, &set, 0);
     }
     ts->in_sigsuspend = 0;
 }

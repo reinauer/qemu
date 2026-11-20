@@ -152,7 +152,7 @@ bool handle_sigsegv_accerr_write(CPUState *cpu, sigset_t *old_set,
          * Fault caused by protection of cached translation, and the
          * currently executing TB was modified and must be exited immediately.
          */
-        sigprocmask(SIG_SETMASK, old_set, NULL);
+        pthread_sigmask(SIG_SETMASK, old_set, NULL);
         cpu_loop_exit_noexc(cpu);
         /* NORETURN */
     default:
