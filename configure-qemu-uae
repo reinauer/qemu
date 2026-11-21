@@ -103,7 +103,6 @@ esac
     --disable-guest-agent \
     --disable-linux-aio \
     --disable-seccomp \
-    --disable-glusterfs \
     --disable-capstone \
     --disable-numa \
     --disable-rdma \

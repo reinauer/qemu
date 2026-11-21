@@ -21,12 +21,14 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/main-loop.h"
+#include "qemu/target-info-qom.h"
 #include "qemu/accel.h"
 #include "qemu-version.h"
 #include "qapi/error.h"
 #include "qom/object.h"
 #include "exec/cpu-common.h"
 #include "hw/core/boards.h"
+#include "system/memory-internal.h"
 #include "system/system.h"
 #include "system/cpus.h"
 #include "system/runstate.h"
@@ -92,7 +94,7 @@ static bool qemu_uae_create_machine(void)
         object_property_add_new_container(OBJECT(current_machine),
                                           containers[i]);
     }
-    cpu_exec_init_all();
+    machine_memory_init();
 
     accel_class = accel_find("tcg");
     if (!accel_class) {
@@ -140,6 +142,9 @@ static bool initialize(void)
     uae_log("QEMU: Initialize QEMU-UAE (QEMU %s + API %d.%d.%d)\n",
             QEMU_FULL_VERSION, major, minor, revision);
 
+    /* Set target information before registering target-dependent QOM types. */
+    module_call_init(MODULE_INIT_TARGET_INFO);
+    target_info_qom_set_target();
     uae_log("QEMU: qemu_init_subsystems\n");
     qemu_init_subsystems();
 
