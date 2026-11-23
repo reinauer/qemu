@@ -1,0 +1,164 @@
+# Build qemu-system-ppc with the AmigaOne A1222 machine for Linux, macOS
+# and Windows. Pushing a tag a1222-* also publishes a release.
+
+name: A1222 binaries
+
+on:
+  push:
+    branches: [A1222]
+    tags: ['a1222-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Only the features the A1222 needs, so that the result does not depend
+  # on what happens to be installed on the runner.
+  CONFIGURE_ARGS: >-
+    --target-list=ppc-softmmu --without-default-features --disable-werror
+    --enable-fdt=internal --enable-pixman --enable-slirp
+    --enable-hmp --enable-tools --enable-stack-protector --enable-vnc
+    --enable-vvfat --enable-vdi --enable-vmdk --enable-vhdx --enable-vpc
+    --enable-qed --enable-qcow1
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison flex ninja-build pkg-config python3-venv \
+            libglib2.0-dev libpixman-1-dev libslirp-dev \
+            libgtk-3-dev libsdl2-dev \
+            libpulse-dev libasound2-dev libpipewire-0.3-dev
+      - name: Build
+        run: |
+          mkdir build && cd build
+          ../configure $CONFIGURE_ARGS --prefix=/ --enable-gtk --enable-sdl \
+            --enable-pa --enable-alsa --enable-pipewire
+          make -j$(nproc)
+          make install DESTDIR=$PWD/../stage
+          ../stage/bin/qemu-system-ppc -M help | grep a1222
+          ../stage/bin/qemu-img --version
+      - name: Package
+        run: .github/package-a1222.sh linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-a1222-linux-x86_64
+          path: qemu-a1222-linux-x86_64.tar.xz
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install ninja pkgconf glib pixman libslirp dylibbundler
+      - name: Build
+        run: |
+          mkdir build && cd build
+          ../configure $CONFIGURE_ARGS --prefix=/ --enable-cocoa --enable-coreaudio
+          make -j$(sysctl -n hw.ncpu)
+          make install DESTDIR=$PWD/../stage
+      - name: Bundle libraries
+        run: |
+          # Copy the Homebrew libraries next to the binary and sign again.
+          dylibbundler -of -b -cd $(for f in stage/bin/*; do echo -x $f; done) \
+            -d stage/lib -p @executable_path/../lib/
+          # Homebrew rpaths all become @executable_path/../lib/, and dyld
+          # rejects a binary with the same LC_RPATH twice.
+          for f in stage/bin/*; do
+            n=$(otool -l $f | grep -A2 'cmd LC_RPATH' |
+              grep -c 'path @executable_path/../lib/ ' || true)
+            while [ "$n" -gt 1 ]; do
+              install_name_tool -delete_rpath @executable_path/../lib/ $f
+              n=$((n - 1))
+            done
+          done
+          codesign --force --sign - stage/lib/*.dylib stage/bin/*
+          codesign --force --sign - \
+            --entitlements accel/hvf/entitlements.plist \
+            stage/bin/qemu-system-ppc
+          otool -L stage/bin/qemu-system-ppc
+          if otool -L stage/bin/* stage/lib/*.dylib | \
+              grep -E '/(opt/homebrew|usr/local)/'; then
+            echo 'Homebrew library left unbundled'; exit 1
+          fi
+          stage/bin/qemu-system-ppc --version
+          stage/bin/qemu-system-ppc -M help | grep a1222
+          stage/bin/qemu-img --version
+      - name: Package
+        run: .github/package-a1222.sh macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-a1222-macos-arm64
+          path: qemu-a1222-macos-arm64.tar.xz
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            bison diffutils flex git make sed tar xz zip
+          pacboy: >-
+            gcc:p glib2:p pixman:p libslirp:p SDL2:p
+            ninja:p pkgconf:p python:p python-certifi:p
+            python-setuptools:p python-wheel:p
+      - name: Build
+        run: |
+          mkdir build stage && cd build
+          ../configure $CONFIGURE_ARGS --prefix="$(cygpath -m "$PWD/../stage")" \
+            --enable-sdl --enable-dsound
+          make -j$(nproc)
+          make install
+      - name: Bundle libraries
+        run: |
+          # Copy every UCRT64 DLL that QEMU needs next to the executables.
+          exe=$(find stage -name qemu-system-ppc.exe)
+          dir=$(dirname "$exe")
+          for f in "$dir"/*.exe; do ldd "$f"; done |
+            awk '$3 ~ /^\/ucrt64\// {print $3}' | sort -u |
+            xargs -r cp -t "$dir"
+          # SDL2 may be sdl2-compat, which loads SDL3 at run time.
+          if [ -f /ucrt64/bin/SDL3.dll ]; then
+            cp /ucrt64/bin/SDL3.dll "$dir"
+          fi
+          ldd "$exe"
+          "$exe" --version
+          "$exe" -M help | grep a1222
+          "$dir"/qemu-img.exe --version
+      - name: Package
+        run: .github/package-a1222.sh windows-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-a1222-windows-x86_64
+          path: qemu-a1222-windows-x86_64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/a1222-')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            qemu-a1222-*.tar.xz
+            qemu-a1222-*.zip
