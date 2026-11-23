@@ -1,0 +1,82 @@
+# Build qemu-x86_64 and qemu-i386 for running x86-64 and i386 Linux
+# programs on Apple silicon Macs. Pushing a tag linonmac-* also
+# publishes a release.
+
+name: linux-user binaries for macOS
+
+on:
+  push:
+    branches: [linonmac]
+    tags: ['linonmac-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install ninja pkgconf glib dylibbundler
+      - name: Build
+        run: |
+          mkdir build && cd build
+          ../configure \
+            --target-list=x86_64-linux-user,i386-linux-user \
+            --without-default-features --enable-linux-user --disable-system --disable-bsd-user \
+            --disable-tools --disable-docs --disable-guest-agent \
+            --disable-plugins --disable-rust --disable-werror
+          make -j$(sysctl -n hw.ncpu) qemu-x86_64 qemu-i386
+      - name: Smoke test
+        run: |
+          build/qemu-x86_64 --version
+          build/qemu-i386 --version
+      - name: Package
+        run: |
+          name=qemu-linux-user-macos-arm64
+          mkdir -p $name/bin $name/lib
+          cp build/qemu-x86_64 build/qemu-i386 $name/bin/
+          # Copy the Homebrew libraries next to the binaries and sign again.
+          dylibbundler -of -b -cd -x $name/bin/qemu-x86_64 \
+            -x $name/bin/qemu-i386 -d $name/lib -p @executable_path/../lib/
+          # Homebrew rpaths all become @executable_path/../lib/, and dyld
+          # rejects a binary with the same LC_RPATH twice.
+          for f in $name/bin/*; do
+            n=$(otool -l $f | grep -A2 'cmd LC_RPATH' |
+              grep -c 'path @executable_path/../lib/ ' || true)
+            while [ "$n" -gt 1 ]; do
+              install_name_tool -delete_rpath @executable_path/../lib/ $f
+              n=$((n - 1))
+            done
+          done
+          codesign --force --sign - $name/lib/*.dylib $name/bin/*
+          if otool -L $name/bin/* $name/lib/*.dylib | \
+              grep -E '/(opt/homebrew|usr/local)/'; then
+            echo 'Homebrew library left unbundled'; exit 1
+          fi
+          $name/bin/qemu-x86_64 --version
+          $name/bin/qemu-i386 --version
+          cp linux-user/darwin/README.md COPYING $name/
+          git log -1 --format='Built from %H (%cd)' > $name/VERSION.txt
+          tar -cJf $name.tar.xz $name
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-linux-user-macos-arm64
+          path: qemu-linux-user-macos-arm64.tar.xz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/linonmac-')
+    needs: [macos-arm64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: qemu-linux-user-macos-arm64.tar.xz
